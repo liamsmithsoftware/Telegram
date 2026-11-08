@@ -1,0 +1,23 @@
+services:
+  telegram-collector:
+    build: .
+    container_name: telegram-channel-collector
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: Asia/Tehran
+      TELEGRAM_COLLECTOR_DATA_DIR: /app/data
+      TELEGRAM_COLLECTOR_HOST: 0.0.0.0
+      TELEGRAM_COLLECTOR_PORT: "8000"
+      # در صورت نیاز به پروکسی، آدرس را اینجا تنظیم کنید
+      # HTTPS_PROXY: http://host.docker.internal:10809
+    volumes:
+      # دیتابیس، نشست Telethon و خروجی‌ها در این پوشه نگهداری می‌شود
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
