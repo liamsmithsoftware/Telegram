@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>سامانه هوشمند جمع‌آوری و آرشیو کانال‌های تلگرام</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+    <!-- Top Header -->
+    <header class="app-header">
+        <div class="container header-inner">
+            <div class="brand">
+                <div class="brand-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 3.5L2.5 11l7 2.8 2.8 7 9.2-17.3z" stroke-linejoin="round"/>
+                        <path d="M9.5 13.8L21.5 3.5" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">آرشیو هوشمند کانال‌های تلگرام</h1>
+                    <div class="brand-subtitle">
+                        دریافت زمان‌بندی‌شده مطالب، جلوگیری از تکرار با شناسه پیام و خروجی ساختارمند Excel و SQLite
+                    </div>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                <span id="schedulerBadge" class="scheduler-badge running" title="وضعیت زمان‌بند خودکار پس‌زمینه">
+                    <span class="pulse-dot"></span>
+                    <span id="schedulerBadgeText">زمان‌بند خودکار فعال</span>
+                </span>
+
+                <button id="btnSyncAll" class="btn btn-primary" type="button">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12a9 9 0 0 0-15.5-6.36L3 8"/><path d="M3 3v5h5"/>
+                        <path d="M3 12a9 9 0 0 0 15.5 6.36L21 16"/><path d="M16 16h5v5"/>
+                    </svg>
+                    <span>دریافت فوری همه</span>
+                </button>
+
+                <button id="btnQuickExcel" class="btn btn-success" type="button">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <path d="M9 13l6 6M15 13l-6 6"/>
+                    </svg>
+                    <span>خروجی اکسل (.xlsx)</span>
+                </button>
+
+                <button id="btnQuickSqlite" class="btn btn-outline" type="button">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                    </svg>
+                    <span>خروجی SQLite</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="container main-content">
+        <!-- Stats Cards -->
+        <section class="stats-grid" aria-label="خلاصه وضعیت سیستم">
+            <div class="stat-card">
+                <div class="stat-label">کانال‌های ثبت‌شده</div>
+                <div class="stat-value"><span id="statTotalChannels">0</span></div>
+                <div class="stat-meta"><span id="statActiveChannels">0</span> کانال در حال پایش خودکار</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">مطالب ذخیره‌شده در دیتابیس</div>
+                <div class="stat-value"><span id="statTotalPosts">0</span></div>
+                <div class="stat-meta" id="statLatestPost">آخرین مطلب: —</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">نزدیک‌ترین اجرای خودکار بعدی</div>
+                <div class="stat-value stat-value-sm" id="statNextFetch">—</div>
+                <div class="stat-meta">بررسی خودکار هر ۳۰ ثانیه</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">موتور دریافت و پایگاه داده</div>
+                <div class="stat-value stat-value-sm" id="statCollectorMode">هوشمند (وب + Telethon)</div>
+                <div class="stat-meta" id="statDbInfo">حجم SQLite: ۰ کیلوبایت</div>
+            </div>
+        </section>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs-nav" role="tablist">
+            <button class="tab-btn active" data-tab="channels" type="button">
+                ۱. مدیریت کانال‌ها و زمان‌بندی
+            </button>
+            <button class="tab-btn" data-tab="posts" type="button">
+                ۲. آرشیو مطالب ذخیره‌شده
+                <span id="postsCountBadge" class="tab-badge">0</span>
+            </button>
+            <button class="tab-btn" data-tab="logs" type="button">
+                ۳. گزارش دریافت و تاریخچه
+            </button>
+            <button class="tab-btn" data-tab="settings" type="button">
+                ۴. تنظیمات، پروکسی و اکانت تلگرام
+            </button>
+        </nav>
+
+        <!-- TAB 1: CHANNELS -->
+        <section id="tab-channels" class="tab-panel active">
+            <!-- Add Channel Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h2 class="card-title">افزودن کانال تلگرام جدید</h2>
+                        <p class="card-desc">
+                            آدرس یا یوزرنیم کانال را وارد کرده و بازه زمانی بررسی خودکار (از چند ساعت تا چند روز) را تعیین کنید. در اولین اتصال فقط ۱۰ مطلب آخر دریافت می‌شود و از دفعات بعد تنها مطالب جدیدتر از آخرین شناسه ذخیره خواهند شد.
+                        </p>
+                    </div>
+                </div>
+
+                <form id="addChannelForm" class="form-grid">
+                    <div class="form-group col-span-2">
+                        <label for="channelInput">آدرس یا شناسه کانال تلگرام <span class="req">*</span></label>
+                        <input
+                            id="channelInput"
+                            type="text"
+                            class="form-control ltr-input"
+                            placeholder="https://t.me/channel_name  یا  @channel_name"
+                            required
+                        />
+                        <small class="field-hint">پشتیبانی از لینک کامل (t.me/...)، لینک وب (t.me/s/...)، @username و لینک کانال خصوصی (با Telethon)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="channelTitle">عنوان نمایشی (اختیاری)</label>
+                        <input
+                            id="channelTitle"
+                            type="text"
+                            class="form-control"
+                            placeholder="خالی بگذارید تا خودکار از کانال خوانده شود"
+                        />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="intervalValue">بازه زمانی بررسی خودکار <span class="req">*</span></label>
+                        <div class="input-combo">
+                            <input
+                                id="intervalValue"
+                                type="number"
+                                step="any"
+                                min="1"
+                                value="6"
+                                class="form-control"
+                                required
+                            />
+                            <select id="intervalUnit" class="form-control unit-select">
+                                <option value="hours" selected>ساعت</option>
+                                <option value="days">روز</option>
+                                <option value="minutes">دقیقه</option>
+                            </select>
+                        </div>
+                        <div class="preset-chips" aria-label="انتخاب سریع بازه زمانی">
+                            <button type="button" class="chip" data-val="2" data-unit="hours">هر ۲ ساعت</button>
+                            <button type="button" class="chip active" data-val="6" data-unit="hours">هر ۶ ساعت</button>
+                            <button type="button" class="chip" data-val="12" data-unit="hours">هر ۱۲ ساعت</button>
+                            <button type="button" class="chip" data-val="1" data-unit="days">هر ۱ روز</button>
+                            <button type="button" class="chip" data-val="3" data-unit="days">هر ۳ روز</button>
+                            <button type="button" class="chip" data-val="7" data-unit="days">هر ۷ روز</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="initialLimit">تعداد مطالب در اولین دریافت</label>
+                        <input
+                            id="initialLimit"
+                            type="number"
+                            min="1"
+                            max="100"
+                            value="10"
+                            class="form-control"
+                        />
+                        <small class="field-hint">پیش‌فرض: فقط ۱۰ مطلب آخر در شروع</small>
+                    </div>
+
+                    <div class="form-group form-actions-inline">
+                        <label class="checkbox-label">
+                            <input id="fetchNowCheck" type="checkbox" checked />
+                            <span>دریافت فوری ۱۰ مطلب آخر بلافاصله پس از افزودن</span>
+                        </label>
+                        <button id="btnAddChannel" type="submit" class="btn btn-primary btn-lg">
+                            + افزودن کانال به لیست
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Channels Table Card -->
+            <div class="card">
+                <div class="card-header card-header-flex">
+                    <div>
+                        <h2 class="card-title">لیست کانال‌های تحت پایش</h2>
+                        <p class="card-desc">وضعیت آخرین شناسه پیام (Message ID) برای جلوگیری از تکرار و زمان‌بندی هر کانال</p>
+                    </div>
+                    <div class="card-header-tools">
+                        <button id="btnSeedDemoQuick" type="button" class="btn btn-ghost btn-sm" title="افزودن داده‌های نمونه برای تست جدول و خروجی اکسل/SQLite">
+                            بارگذاری داده نمونه آزمایشی
+                        </button>
+                        <button id="btnRefreshChannels" type="button" class="btn btn-outline btn-sm">
+                            بروزرسانی لیست
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>نام و آدرس کانال</th>
+                                <th>بازه بررسی</th>
+                                <th>آخرین شناسه پیام (ضدتکرار)</th>
+                                <th>تعداد مطالب</th>
+                                <th>آخرین بررسی</th>
+                                <th>بررسی خودکار بعدی</th>
+                                <th>وضعیت</th>
+                                <th>عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="channelsTableBody">
+                            <tr>
+                                <td colspan="8" class="empty-cell">در حال بارگذاری لیست کانال‌ها...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 2: POSTS ARCHIVE -->
+        <section id="tab-posts" class="tab-panel">
+            <div class="card">
+                <div class="card-header card-header-flex">
+                    <div>
+                        <h2 class="card-title">آرشیو ساختارمند مطالب ذخیره‌شده</h2>
+                        <p class="card-desc">تفکیک دقیق بر اساس کانال، آدرس مستقیم مطلب، تاریخ انتشار (شمسی و میلادی) و ساعت انتشار</p>
+                    </div>
+                    <div class="export-group">
+                        <button id="btnExportFilteredExcel" type="button" class="btn btn-success btn-sm">
+                            خروجی اکسل از فیلتر فعلی (.xlsx)
+                        </button>
+                        <button id="btnExportFullSqlite" type="button" class="btn btn-outline btn-sm">
+                            دانلود کل دیتابیس (.sqlite)
+                        </button>
+                        <button id="btnExportFilteredSqlite" type="button" class="btn btn-ghost btn-sm">
+                            SQLite فقط فیلتر فعلی
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filters Bar -->
+                <form id="postFiltersForm" class="filters-bar">
+                    <div class="filter-item">
+                        <label for="filterChannel">کانال</label>
+                        <select id="filterChannel" class="form-control">
+                            <option value="">همه کانال‌ها</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-item filter-search">
+                        <label for="filterSearch">جستجو در متن یا آدرس</label>
+                        <input id="filterSearch" type="text" class="form-control" placeholder="کلیدواژه مورد نظر..." />
+                    </div>
+
+                    <div class="filter-item">
+                        <label for="filterDateFrom">از تاریخ (شمسی یا میلادی)</label>
+                        <input id="filterDateFrom" type="text" class="form-control ltr-input" placeholder="1405/08/01 یا 2026-11-01" />
+                    </div>
+
+                    <div class="filter-item">
+                        <label for="filterDateTo">تا تاریخ</label>
+                        <input id="filterDateTo" type="text" class="form-control ltr-input" placeholder="1405/08/30 یا 2026-11-30" />
+                    </div>
+
+                    <div class="filter-item">
+                        <label for="filterMediaType">نوع محتوا</label>
+                        <select id="filterMediaType" class="form-control">
+                            <option value="all">همه انواع</option>
+                            <option value="text">متن</option>
+                            <option value="photo">تصویر</option>
+                            <option value="video">ویدیو</option>
+                            <option value="document">فایل پیوست</option>
+                            <option value="voice">صوت</option>
+                            <option value="poll">نظرسنجی</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-actions">
+                        <button type="submit" class="btn btn-primary">اعمال فیلتر</button>
+                        <button id="btnClearFilters" type="button" class="btn btn-ghost">پاک‌سازی</button>
+                    </div>
+                </form>
+
+                <!-- Posts Table -->
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>کانال</th>
+                                <th>شناسه پیام</th>
+                                <th>تاریخ انتشار</th>
+                                <th>ساعت</th>
+                                <th>نوع / بازدید</th>
+                                <th>متن مطلب</th>
+                                <th>آدرس مستقیم مطلب</th>
+                                <th>جزئیات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="postsTableBody">
+                            <tr>
+                                <td colspan="8" class="empty-cell">هنوز مطلبی ذخیره نشده است.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination-bar">
+                    <div id="postsPaginationInfo" class="pagination-info">نمایش ۰ از ۰ مطلب</div>
+                    <div class="pagination-controls">
+                        <button id="btnPrevPage" type="button" class="btn btn-outline btn-sm" disabled>صفحه قبل</button>
+                        <span id="pageIndicator" class="page-indicator">صفحه ۱ از ۱</span>
+                        <button id="btnNextPage" type="button" class="btn btn-outline btn-sm" disabled>صفحه بعد</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 3: LOGS -->
+        <section id="tab-logs" class="tab-panel">
+            <div class="card">
+                <div class="card-header card-header-flex">
+                    <div>
+                        <h2 class="card-title">گزارش اجرای زمان‌بند و تاریخچه دریافت‌ها</h2>
+                        <p class="card-desc">ردیابی دقیق دفعات اتصال به کانال‌ها، تعداد مطالب جدید ذخیره‌شده و تغییرات شناسه آخرین پیام</p>
+                    </div>
+                    <div class="card-header-tools">
+                        <button id="btnRefreshLogs" type="button" class="btn btn-outline btn-sm">بروزرسانی گزارش</button>
+                        <button id="btnClearLogs" type="button" class="btn btn-danger-ghost btn-sm">پاک کردن تاریخچه</button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>زمان اجرا</th>
+                                <th>کانال</th>
+                                <th>نحوه اجرا</th>
+                                <th>موتور</th>
+                                <th>پست‌های جدید</th>
+                                <th>تغییر شناسه (Last ID)</th>
+                                <th>مدت</th>
+                                <th>نتیجه و توضیحات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsTableBody">
+                            <tr>
+                                <td colspan="8" class="empty-cell">هنوز گزارشی ثبت نشده است.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 4: SETTINGS -->
+        <section id="tab-settings" class="tab-panel">
+            <div class="settings-grid">
+                <!-- General & Proxy Settings -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">تنظیمات موتور دریافت، منطقه زمانی و پروکسی</h2>
+                        <p class="card-desc">نحوه ارتباط برنامه با تلگرام و قالب زمان‌بندی تاریخ و ساعت را مشخص کنید.</p>
+                    </div>
+
+                    <form id="settingsForm" class="stack-form">
+                        <div class="form-group">
+                            <label for="settingCollectorMode">روش دریافت مطالب از تلگرام</label>
+                            <select id="settingCollectorMode" class="form-control">
+                                <option value="auto">هوشمند ترکیبی (پیشنهادی: نسخه وب بدون اکانت + Telethon در صورت اتصال)</option>
+                                <option value="web">فقط نسخه وب عمومی تلگرام (t.me/s — بدون نیاز به اکانت و API)</option>
+                                <option value="telethon">فقط پروتکل رسمی Telethon (مخصوص کانال‌های خصوصی و عمومی)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label for="settingTimezone">منطقه زمانی تفکیک تاریخ و ساعت</label>
+                                <select id="settingTimezone" class="form-control">
+                                    <option value="Asia/Tehran">ایران — تهران (Asia/Tehran)</option>
+                                    <option value="UTC">جهانی (UTC)</option>
+                                    <option value="Europe/London">اروپا — لندن (Europe/London)</option>
+                                    <option value="America/New_York">آمریکا — نیویورک (America/New_York)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settingDefaultLimit">تعداد پیش‌فرض اولین دریافت</label>
+                                <input id="settingDefaultLimit" type="number" min="1" max="100" value="10" class="form-control" />
+                            </div>
+                        </div>
+
+                        <hr class="divider" />
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input id="settingProxyEnabled" type="checkbox" />
+                                <span><strong>استفاده از پروکسی (SOCKS5 / HTTP)</strong> برای اتصال به تلگرام</span>
+                            </label>
+                            <small class="field-hint">در صورت مسدود بودن دسترسی مستقیم به t.me روی سیستم شما، پروکسی لوکال (مثلاً v2rayN / Nekoray / Tor) یا سرور را وارد کنید.</small>
+                        </div>
+
+                        <div id="proxyFieldsBox" class="proxy-box">
+                            <div class="form-row-3">
+                                <div class="form-group">
+                                    <label for="settingProxyType">نوع پروکسی</label>
+                                    <select id="settingProxyType" class="form-control">
+                                        <option value="socks5">SOCKS5</option>
+                                        <option value="http">HTTP</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="settingProxyHost">آدرس (Host / IP)</label>
+                                    <input id="settingProxyHost" type="text" class="form-control ltr-input" placeholder="127.0.0.1" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="settingProxyPort">پورت (Port)</label>
+                                    <input id="settingProxyPort" type="text" class="form-control ltr-input" placeholder="10808" />
+                                </div>
+                            </div>
+
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label for="settingProxyUser">نام کاربری پروکسی (اختیاری)</label>
+                                    <input id="settingProxyUser" type="text" class="form-control ltr-input" placeholder="Username" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="settingProxyPass">رمز عبور پروکسی (اختیاری)</label>
+                                    <input id="settingProxyPass" type="password" class="form-control ltr-input" placeholder="Password" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-footer">
+                            <button type="submit" class="btn btn-primary">ذخیره تنظیمات پایه و پروکسی</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Telethon Account Login + Demo Tools -->
+                <div class="stack-col">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">اتصال اکانت تلگرام (Telethon MTProto — اختیاری)</h2>
+                            <p class="card-desc">
+                                برای کانال‌های <strong>عمومی</strong> نیازی به این بخش نیست. اما اگر کانال <strong>خصوصی</strong> دارید یا پیش‌نمایش وب آن بسته است، می‌توانید `api_id` و `api_hash` رایگان را از <code>my.telegram.org</code> دریافت و متصل کنید.
+                            </p>
+                        </div>
+
+                        <div id="telethonStatusBanner" class="status-banner neutral">
+                            وضعیت Telethon: متصل نشده (موتور وب عمومی بدون لاگین فعال است)
+                        </div>
+
+                        <div class="stack-form">
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label for="telethonApiId">API ID</label>
+                                    <input id="telethonApiId" type="text" class="form-control ltr-input" placeholder="12345678" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="telethonApiHash">API Hash</label>
+                                    <input id="telethonApiHash" type="password" class="form-control ltr-input" placeholder="0123456789abcdef..." />
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="telethonPhone">شماره موبایل اکانت تلگرام (با کد کشور)</label>
+                                <div class="input-combo">
+                                    <input id="telethonPhone" type="text" class="form-control ltr-input" placeholder="+989123456789" />
+                                    <button id="btnSendCode" type="button" class="btn btn-outline">ارسال کد تایید</button>
+                                </div>
+                            </div>
+
+                            <div id="telethonVerifyBox" class="verify-box hidden">
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label for="telethonCode">کد ارسال‌شده به تلگرام</label>
+                                        <input id="telethonCode" type="text" class="form-control ltr-input" placeholder="12345" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="telethon2FA">رمز تایید دو مرحله‌ای (در صورت فعال بودن)</label>
+                                        <input id="telethon2FA" type="password" class="form-control ltr-input" placeholder="اختیاری" />
+                                    </div>
+                                </div>
+                                <button id="btnVerifyCode" type="button" class="btn btn-success">تایید کد و تکمیل اتصال</button>
+                            </div>
+
+                            <div class="form-footer-between">
+                                <button id="btnSaveTelethonCreds" type="button" class="btn btn-outline btn-sm">ذخیره کلیدهای API</button>
+                                <button id="btnLogoutTelethon" type="button" class="btn btn-danger-ghost btn-sm">خروج و حذف نشست Telethon</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Demo & Offline Testing Helper -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">ابزار تست سریع محیط و خروجی‌ها</h2>
+                            <p class="card-desc">
+                                اگر می‌خواهید بدون اتصال به اینترنت، نحوه ذخیره‌سازی تفکیک‌شده (لینک، تاریخ شمسی/میلادی، ساعت) و خروجی‌های <strong>Excel</strong> و <strong>SQLite</strong> را آزمایش کنید، از دکمه‌های زیر استفاده نمایید.
+                            </p>
+                        </div>
+                        <div class="demo-actions">
+                            <button id="btnSeedDemo" type="button" class="btn btn-outline">افزودن داده‌های نمونه آزمایشی</button>
+                            <button id="btnClearDemo" type="button" class="btn btn-danger-ghost">حذف داده‌های آزمایشی</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Edit Channel Modal -->
+    <div id="editChannelModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>ویرایش تنظیمات و زمان‌بندی کانال</h3>
+                <button type="button" class="modal-close" data-close-modal="editChannelModal">&times;</button>
+            </div>
+            <form id="editChannelForm" class="stack-form">
+                <input type="hidden" id="editChannelId" />
+
+                <div class="form-group">
+                    <label for="editChannelTitle">عنوان نمایشی کانال</label>
+                    <input id="editChannelTitle" type="text" class="form-control" required />
+                </div>
+
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label for="editIntervalValue">مقدار بازه زمانی</label>
+                        <input id="editIntervalValue" type="number" step="any" min="1" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="editIntervalUnit">واحد زمانی</label>
+                        <select id="editIntervalUnit" class="form-control">
+                            <option value="hours">ساعت</option>
+                            <option value="days">روز</option>
+                            <option value="minutes">دقیقه</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="editInitialLimit">تعداد مطالب در دریافت اولیه</label>
+                    <input id="editInitialLimit" type="number" min="1" max="100" class="form-control" required />
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input id="editChannelActive" type="checkbox" />
+                        <span>بررسی خودکار زمان‌بندی‌شده برای این کانال فعال باشد</span>
+                    </label>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-ghost" data-close-modal="editChannelModal">انصراف</button>
+                    <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Post Full Content Modal -->
+    <div id="postDetailModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+        <div class="modal-card modal-lg">
+            <div class="modal-header">
+                <h3 id="modalPostChannelTitle">جزئیات مطلب</h3>
+                <button type="button" class="modal-close" data-close-modal="postDetailModal">&times;</button>
+            </div>
+            <div class="post-meta-strip">
+                <span class="meta-pill"><strong>شناسه پیام:</strong> <span id="modalPostMsgId" class="ltr-text"></span></span>
+                <span class="meta-pill"><strong>تاریخ شمسی:</strong> <span id="modalPostJalali"></span></span>
+                <span class="meta-pill"><strong>تاریخ میلادی:</strong> <span id="modalPostGreg" class="ltr-text"></span></span>
+                <span class="meta-pill"><strong>ساعت انتشار:</strong> <span id="modalPostTime" class="ltr-text"></span></span>
+                <span class="meta-pill"><strong>بازدید:</strong> <span id="modalPostViews"></span></span>
+            </div>
+            <div id="modalPostContent" class="post-full-body"></div>
+            <div class="post-url-box">
+                <span>آدرس مستقیم مطلب:</span>
+                <a id="modalPostUrl" href="#" target="_blank" rel="noopener noreferrer" class="ltr-text"></a>
+            </div>
+            <div class="modal-footer">
+                <button id="btnCopyPostText" type="button" class="btn btn-outline btn-sm">کپی متن مطلب</button>
+                <button id="btnCopyPostLink" type="button" class="btn btn-outline btn-sm">کپی لینک مطلب</button>
+                <button type="button" class="btn btn-primary btn-sm" data-close-modal="postDetailModal">بستن</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
