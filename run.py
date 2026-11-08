@@ -11,12 +11,75 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+def port_available(host: str, port: int) -> bool:
+    """True when nothing else is listening on this port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def is_our_app(host: str, port: int) -> bool:
+    """Check whether the service already on that port is this very program."""
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
+    try:
+        with urllib.request.urlopen(f"http://{probe_host}:{port}/healthz", timeout=2) as response:
+            body = response.read(200).decode("utf-8", "replace")
+        return '"status"' in body and "ok" in body
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def pick_free_port(host: str, start_port: int, span: int = 20) -> int:
+    for candidate in range(start_port, start_port + span):
+        if port_available(host, candidate):
+            return candidate
+    return start_port
+
+
+def handle_busy_port(host: str, port: int) -> int:
+    """
+    Decides what to do when the requested port is occupied.
+    Returns the port that should actually be used (exits the process when the
+    program is already running, so the user never sees a raw WinError 10048).
+    """
+    if port_available(host, port):
+        return port
+
+    already_running = is_our_app(host, port)
+
+    print()
+    print("=" * 62)
+    print(f"  پورت {port} در حال حاضر اشغال است.")
+    if already_running:
+        print("  به نظر می‌رسد برنامه از قبل در حال اجراست.")
+        print(f"  پنل مدیریت:  http://localhost:{port}")
+        print()
+        print("  اگر پنجره قدیمی را می‌بینید، ابتدا آن را ببندید (یا Ctrl+C بزنید)")
+        print("  و سپس دوباره برنامه را اجرا کنید.")
+        print("=" * 62)
+        raise SystemExit(0)
+
+    new_port = pick_free_port(host, port + 1)
+    print(f"  برنامه روی پورت آزاد {new_port} اجرا می‌شود:")
+    print(f"  پنل مدیریت:  http://localhost:{new_port}")
+    print("=" * 62)
+    print()
+    return new_port
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -28,6 +91,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--port", type=int, default=int(os.getenv("TELEGRAM_COLLECTOR_PORT", "8000")), help="پورت سرور"
     )
     parser.add_argument("--reload", action="store_true", help="بارگذاری خودکار هنگام تغییر کد")
+    parser.add_argument(
+        "--strict-port",
+        action="store_true",
+        help="اگر پورت اشغال بود، به‌جای انتخاب پورت آزاد، برنامه متوقف شود",
+    )
     return parser.parse_args(argv)
 
 
@@ -63,6 +131,15 @@ def main(argv: list[str] | None = None) -> None:
     from app.config import ensure_directories
 
     ensure_directories()
+
+    # پورت اشغال‌شده نباید باعث کرش با WinError 10048 شود
+    if port_available(args.host, args.port):
+        pass
+    elif args.strict_port:
+        print(f"خطا: پورت {args.port} اشغال است. یک پورت دیگر با --port انتخاب کنید.")
+        raise SystemExit(1)
+    else:
+        args.port = handle_busy_port(args.host, args.port)
 
     print("=" * 68)
     print("  سامانه هوشمند جمع‌آوری و آرشیو کانال‌های تلگرام")

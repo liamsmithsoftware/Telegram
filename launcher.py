@@ -183,33 +183,33 @@ def main() -> int:
         pass
 
     args = list(sys.argv[1:])
-    port = DEFAULT_PORT
+
+    explicit_port: int | None = None
     for idx, arg in enumerate(args):
         if arg in ("--port", "-p") and idx + 1 < len(args):
             try:
-                port = int(args[idx + 1])
+                explicit_port = int(args[idx + 1])
             except ValueError:
-                pass
+                explicit_port = None
         elif arg.startswith("--port="):
             try:
-                port = int(arg.split("=", 1)[1])
+                explicit_port = int(arg.split("=", 1)[1])
             except ValueError:
-                pass
+                explicit_port = None
 
-    if "--port" not in " ".join(args) and not any(a.startswith("--port=") for a in args):
-        port = pick_port(port)
-        args += ["--port", str(port)]
+    if explicit_port is not None:
+        # User chose a port: never override it. run.py reports a clear Persian
+        # message if it is busy (or already running) instead of crashing.
+        resolved_port = explicit_port
+        if port_is_free(explicit_port):
+            open_browser(resolved_port)
     else:
-        port = pick_port(port)
-        # replace the given port with the resolved free one
-        for idx, arg in enumerate(args):
-            if arg in ("--port", "-p") and idx + 1 < len(args):
-                args[idx + 1] = str(port)
-            elif arg.startswith("--port="):
-                args[idx] = f"--port={port}"
+        resolved_port = pick_port(DEFAULT_PORT)
+        args += ["--port", str(resolved_port)]
+        open_browser(resolved_port)
 
     print("[3/3] Starting server ...")
-    print(f"      Address:  http://localhost:{port}")
+    print(f"      Address:  http://localhost:{resolved_port}")
     print("      The browser opens automatically in a few seconds.")
     print("      Press Ctrl + C to stop the program.")
     print()
@@ -218,7 +218,6 @@ def main() -> int:
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
 
-    open_browser(port)
     try:
         return subprocess.run([python, str(ROOT / "run.py"), *args], cwd=str(ROOT), env=env).returncode
     except KeyboardInterrupt:

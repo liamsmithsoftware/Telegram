@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -75,7 +76,12 @@ def create_app(
 
     @application.get("/healthz", include_in_schema=False)
     async def healthcheck() -> dict:
-        return {"status": "ok", "scheduler_running": scheduler.is_running}
+        return {
+            "status": "ok",
+            "app": "telegram-channel-collector",
+            "pid": os.getpid(),
+            "scheduler_running": scheduler.is_running,
+        }
 
     return application
 
