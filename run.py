@@ -40,6 +40,26 @@ def main(argv: list[str] | None = None) -> None:
         print("خطا: کتابخانه uvicorn نصب نشده است.\nابتدا دستور زیر را اجرا کنید:\n  pip install -r requirements.txt")
         raise SystemExit(1)
 
+    # کتابخانه‌های ضروری را قبل از بالا آمدن سرور بررسی می‌کنیم تا پیام خطای
+    # واضح فارسی ببینید (نه traceback انگلیسی).
+    missing: list[str] = []
+    for module_name, pip_name in (
+        ("fastapi", "fastapi"),
+        ("httpx", "httpx[socks]"),
+        ("bs4", "beautifulsoup4"),
+        ("apscheduler", "apscheduler"),
+        ("openpyxl", "openpyxl"),
+        ("jdatetime", "jdatetime"),
+    ):
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing.append(pip_name)
+    if missing:
+        print("خطا: این بسته‌ها نصب نشده‌اند: " + ", ".join(missing))
+        print("دستور نصب:  pip install -r requirements.txt")
+        raise SystemExit(1)
+
     from app.config import ensure_directories
 
     ensure_directories()

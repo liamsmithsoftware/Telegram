@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, Response
 
 from app.collectors.base import CollectorError
 from app.collectors.manager import SyncManager
+from app import config as app_config
 from app.config import DEFAULT_TIMEZONE
 from app.database import DatabaseManager
 from app.schemas import (
@@ -384,6 +385,7 @@ async def get_settings_endpoint(
     )
 
     return {
+        "telethon_installed": app_config.TELETHON_INSTALLED,
         "settings": {
             "collector_mode": raw.get("collector_mode", "auto"),
             "timezone": raw.get("timezone", DEFAULT_TIMEZONE),

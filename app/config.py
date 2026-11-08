@@ -12,6 +12,14 @@ SESSION_PREFIX = Path(os.getenv("TELEGRAM_COLLECTOR_SESSION", str(DATA_DIR / "te
 APP_HOST = os.getenv("TELEGRAM_COLLECTOR_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("TELEGRAM_COLLECTOR_PORT", "8000"))
 
+# Telethon is an optional dependency (see requirements-telethon.txt)
+try:  # pragma: no cover - trivial import probe
+    import telethon as _telethon  # noqa: F401
+
+    TELETHON_INSTALLED = True
+except Exception:  # pragma: no cover
+    TELETHON_INSTALLED = False
+
 DEFAULT_TIMEZONE = "Asia/Tehran"
 DEFAULT_INITIAL_LIMIT = 10
 SCHEDULER_TICK_SECONDS = int(os.getenv("TELEGRAM_COLLECTOR_TICK_SECONDS", "30"))

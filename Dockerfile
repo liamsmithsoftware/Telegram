@@ -13,8 +13,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY requirements.txt requirements-telethon.txt ./
+RUN pip install --upgrade pip \
+    && pip install --prefer-binary -r requirements.txt \
+    && pip install --prefer-binary -r requirements-telethon.txt
 
 COPY app ./app
 COPY run.py ./

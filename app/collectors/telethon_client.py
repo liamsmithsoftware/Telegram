@@ -5,15 +5,38 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from telethon import TelegramClient
-from telethon.errors import (
-    FloodWaitError,
-    PhoneCodeExpiredError,
-    PhoneCodeInvalidError,
-    PasswordHashInvalidError,
-    SessionPasswordNeededError,
+try:  # Telethon is optional: the public web scraper works without it
+    from telethon import TelegramClient
+    from telethon.errors import (
+        FloodWaitError,
+        PhoneCodeExpiredError,
+        PhoneCodeInvalidError,
+        PasswordHashInvalidError,
+        SessionPasswordNeededError,
+    )
+    from telethon.tl.patched import MessageService
+
+    TELETHON_AVAILABLE = True
+    TELETHON_IMPORT_ERROR: Optional[str] = None
+except Exception as _import_exc:  # pragma: no cover - depends on environment
+    TelegramClient = None  # type: ignore[assignment]
+
+    class _MissingTelethonError(Exception):
+        """Placeholder so `except` clauses stay valid without Telethon."""
+
+    FloodWaitError = PhoneCodeExpiredError = PhoneCodeInvalidError = _MissingTelethonError  # type: ignore[misc]
+    PasswordHashInvalidError = SessionPasswordNeededError = _MissingTelethonError  # type: ignore[misc]
+    MessageService = None  # type: ignore[assignment]
+
+    TELETHON_AVAILABLE = False
+    TELETHON_IMPORT_ERROR = str(_import_exc)
+
+TELETHON_MISSING_MESSAGE = (
+    "کتابخانه Telethon روی این سیستم نصب نیست؛ بنابراین دریافت کانال‌های خصوصی و ورود با اکانت "
+    "غیرفعال است. کانال‌های عمومی با موتور وب (بدون نیاز به اکانت) به‌درستی کار می‌کنند. "
+    "برای فعال‌سازی، در پوشه برنامه دستور زیر را اجرا کنید: "
+    "pip install telethon"
 )
-from telethon.tl.patched import MessageService
 
 from app.collectors.base import (
     CollectorError,
@@ -41,6 +64,8 @@ class TelethonCollector:
         return Path(f"{self.session_prefix}.session")
 
     def has_credentials(self, settings: Dict[str, str]) -> bool:
+        if not TELETHON_AVAILABLE:
+            return False
         api_id = (settings.get("telethon_api_id") or "").strip()
         api_hash = (settings.get("telethon_api_hash") or "").strip()
         return bool(api_id.isdigit() and len(api_hash) >= 10)
@@ -48,7 +73,9 @@ class TelethonCollector:
     def has_session_file(self) -> bool:
         return self.session_file.exists()
 
-    def _create_client(self, settings: Dict[str, str]) -> TelegramClient:
+    def _create_client(self, settings: Dict[str, str]) -> "TelegramClient":
+        if not TELETHON_AVAILABLE:
+            raise CollectorError(TELETHON_MISSING_MESSAGE)
         api_id_str = (settings.get("telethon_api_id") or "").strip()
         api_hash = (settings.get("telethon_api_hash") or "").strip()
         if not api_id_str.isdigit() or not api_hash:
@@ -67,9 +94,20 @@ class TelethonCollector:
         )
 
     async def get_auth_status(self, settings: Dict[str, str], check_network: bool = False) -> Dict[str, Any]:
+        if not TELETHON_AVAILABLE:
+            return {
+                "available": False,
+                "configured": False,
+                "authorized": False,
+                "session_exists": False,
+                "account": None,
+                "message": TELETHON_MISSING_MESSAGE,
+            }
+
         configured = self.has_credentials(settings)
         if not configured:
             return {
+                "available": True,
                 "configured": False,
                 "authorized": False,
                 "session_exists": False,
@@ -78,6 +116,7 @@ class TelethonCollector:
 
         if not self.has_session_file():
             return {
+                "available": True,
                 "configured": True,
                 "authorized": False,
                 "session_exists": False,
@@ -86,6 +125,7 @@ class TelethonCollector:
 
         if not check_network:
             return {
+                "available": True,
                 "configured": True,
                 "authorized": True,
                 "session_exists": True,
@@ -104,6 +144,7 @@ class TelethonCollector:
                         full_name = " ".join(filter(None, [me.first_name, me.last_name])).strip()
                         account_label = f"{full_name} (+{me.phone})" if me.phone else full_name
                 return {
+                    "available": True,
                     "configured": True,
                     "authorized": bool(is_auth),
                     "session_exists": True,
@@ -111,6 +152,7 @@ class TelethonCollector:
                 }
             except Exception as exc:
                 return {
+                    "available": True,
                     "configured": True,
                     "authorized": False,
                     "session_exists": self.has_session_file(),
@@ -121,6 +163,8 @@ class TelethonCollector:
                 await client.disconnect()
 
     async def send_login_code(self, settings: Dict[str, str], phone: str) -> Dict[str, Any]:
+        if not TELETHON_AVAILABLE:
+            raise CollectorError(TELETHON_MISSING_MESSAGE)
         clean_phone = phone.strip().replace(" ", "")
         if not clean_phone:
             raise CollectorError("لطفاً شماره موبایل اکانت تلگرام را به همراه پیش‌شماره کشور (مثلاً +98912...) وارد کنید.")
@@ -156,6 +200,8 @@ class TelethonCollector:
         code: str,
         password: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if not TELETHON_AVAILABLE:
+            raise CollectorError(TELETHON_MISSING_MESSAGE)
         clean_phone = phone.strip().replace(" ", "")
         clean_code = code.strip()
         phone_code_hash = self._pending_phone_code_hash.get(clean_phone)
@@ -206,6 +252,14 @@ class TelethonCollector:
                 await client.disconnect()
 
     async def logout(self, settings: Dict[str, str]) -> Dict[str, Any]:
+        if not TELETHON_AVAILABLE:
+            # Still remove any stale session file so the next run starts cleanly
+            if self.session_file.exists():
+                self.session_file.unlink(missing_ok=True)
+            return {
+                "logged_out": True,
+                "message": "نشست پاک شد. (Telethon نصب نیست، بنابراین ورود اکانت غیرفعال است.)",
+            }
         async with self._lock:
             if self.has_credentials(settings) and self.has_session_file():
                 client = self._create_client(settings)

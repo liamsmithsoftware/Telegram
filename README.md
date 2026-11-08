@@ -75,6 +75,15 @@ pip install -r requirements.txt
 python run.py
 ```
 
+> **نیازی به Microsoft C++ Build Tools نیست.** فایل `requirements.txt` عمداً از
+> `uvicorn[standard]` استفاده نمی‌کند و همه بسته‌ها به‌صورت wheel آماده نصب می‌شوند.
+>
+> اگر کانال **خصوصی** دارید، موتور اختیاری Telethon را جداگانه نصب کنید:
+> ```bash
+> pip install -r requirements-telethon.txt
+> ```
+> بدون این بسته هم برنامه کامل اجرا می‌شود و فقط کانال‌های عمومی با موتور وب دریافت می‌شوند.
+
 سپس در مرورگر به آدرس زیر بروید:
 
 ```
@@ -272,6 +281,10 @@ SELECT * FROM vw_posts_export WHERE published_date >= '2026-11-01';
 4. شماره موبایل با پیش‌شماره کشور (`+98912...`) را وارد و «ارسال کد تایید» را بزنید
 5. کد دریافتی در تلگرام را وارد کنید (اگر رمز دو مرحله‌ای دارید، آن را هم وارد کنید)
 
+> **پیش‌نیاز نرم‌افزاری:** اگر هنگام نصب فقط `requirements.txt` را نصب کرده‌اید، ابتدا
+> `pip install -r requirements-telethon.txt` را اجرا کنید. نبودن Telethon مانع اجرای
+> برنامه نمی‌شود؛ فقط ورود با اکانت و کانال‌های خصوصی غیرفعال می‌مانند و پنل هشدار می‌دهد.
+
 نشست در `data/telethon_session.session` ذخیره می‌شود و در اجراهای بعدی نیازی به ورود مجدد نیست. برای حذف نشست، دکمه «خروج و حذف نشست» را بزنید.
 
 ### حالت «هوشمند» (پیش‌فرض)
@@ -395,7 +408,7 @@ docker run -d --name tg-collector -p 8000:8000 -v "$(pwd)/data:/app/data" telegr
 .venv\Scripts\python -m pytest -v  # ویندوز
 ```
 
-پوشش تست‌ها (۱۰۰ تست، همه آفلاین و بدون تماس با تلگرام):
+پوشش تست‌ها (۱۰۳ تست، همه آفلاین و بدون تماس با تلگرام):
 
 | فایل | موضوع |
 | --- | --- |
@@ -406,10 +419,59 @@ docker run -d --name tg-collector -p 8000:8000 -v "$(pwd)/data:/app/data" telegr
 | `tests/test_scheduler.py` | انتخاب کانال‌های سررسیده، اجرای تیک، زمان‌بندی بعدی |
 | `tests/test_exporter.py` | صحت `.xlsx` و RTL، ضدتزریق فرمول، اسنپ‌شات `.sqlite`، حذف اطلاعات حساس، فیلتر خروجی |
 | `tests/test_api.py` | همه endpointها، صفحه‌بندی، فیلترها، دانلودها، تنظیمات، داده نمونه |
+| `tests/test_optional_telethon.py` | اجرای کامل برنامه در سیستمی که Telethon نصب نیست |
 
 ---
 
 ## پرسش‌های متداول و رفع اشکال
+
+### خطای `Microsoft Visual C++ 14.0 or greater is required` هنگام نصب
+
+این خطا مربوط به برنامه نیست؛ `pip` می‌خواهد بسته‌ای را از سورس کد کامپایل کند.
+راه‌حل‌ها به ترتیب اولویت:
+
+**۱) نسخه جدید پروژه را بگیرید (حل دائمی).**
+فایل `requirements.txt` اصلاح شده و دیگر هیچ بسته کامپایل‌شونده‌ای (مثل `pyyaml` که
+از `uvicorn[standard]` می‌آمد) نصب نمی‌کند:
+
+```bash
+git pull
+rm -rf .venv                      # ویندوز: rmdir /s /q .venv
+python -m venv .venv
+.venv\Scripts\activate           # لینوکس/مک: source .venv/bin/activate
+pip install --prefer-binary -r requirements.txt
+python run.py
+```
+
+**۲) اجبار به استفاده از wheel آماده** (اگر باز هم pip سورس را انتخاب کرد):
+
+```bash
+pip install --only-binary=:all: --prefer-binary -r requirements.txt
+```
+
+**۳) اگر بسته‌ای واقعاً wheel نداشت**، پیش از نصب آن:
+```bash
+pip install --upgrade pip setuptools wheel
+```
+
+**۴) آخرین راه‌حل (اگر خواستید `uvicorn[standard]` را داشته باشید):**
+نصب [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+با انتخاب workload «Desktop development with C++». **برای این برنامه لازم نیست.**
+
+**۵) نصب آفلاین روی سیستم بدون اینترنت:**
+روی سیستمی که اینترنت دارد:
+```bash
+pip download --only-binary=:all: -d wheels -r requirements.txt
+```
+سپس پوشه `wheels` را به سیستم مقصد ببرید و اجرا کنید:
+```bash
+pip install --no-index --find-links wheels -r requirements.txt
+```
+
+> **نکته:** موتور Telethon اختیاری است. اگر نصب نشد، برنامه باز هم بالا می‌آید و
+> کانال‌های عمومی را با موتور وب دریافت می‌کند؛ در پنل یک هشدار زرد نمایش داده می‌شود.
+
+---
 
 **پیش‌نمایش وب کانال در دسترس نیست.**
 کانال خصوصی است یا مالک آن نمایش وب را بسته است. موتور Telethon را فعال کنید (بخش [Telethon](#۲-موتور-رسمی-telethon-برای-کانال-خصوصی-یا-پیشنمایش-بسته)).
@@ -467,14 +529,15 @@ Telegram/
 │   │   ├── css/style.css        # استایل فارسی RTL
 │   │   └── js/app.js            # منطق رابط کاربری
 │   └── templates/index.html     # صفحه تک‌صفحه‌ای پنل
-├── tests/                       # ۱۰۰ تست آفلاین pytest
+├── tests/                       # ۱۰۳ تست آفلاین pytest
 ├── data/                        # دیتابیس، نشست و خروجی‌ها (خودکار ساخته می‌شود)
 ├── run.py                       # نقطه شروع اجرای سرور
 ├── start_windows.bat            # اجرای آسان در ویندوز
 ├── start_linux_mac.sh           # اجرای آسان در لینوکس/مک
 ├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt
+├── requirements.txt             # وابستگی‌های اصلی (بدون نیاز به کامپایلر C)
+├── requirements-telethon.txt    # موتور اختیاری کانال‌های خصوصی
 └── pytest.ini
 ```
 

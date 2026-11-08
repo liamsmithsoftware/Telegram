@@ -1002,3 +1002,10 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+.status-banner.warning {
+    background: var(--warning-soft);
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    line-height: 1.8;
+}

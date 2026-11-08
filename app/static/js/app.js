@@ -964,10 +964,18 @@ function initLogsEvents() {
 
 /* ------------------------------ Settings ------------------------------ */
 
-function updateTelethonBanner(telethon) {
+function updateTelethonBanner(telethon, installed = true) {
     const banner = $("#telethonStatusBanner");
     if (!banner) return;
     const info = telethon || {};
+
+    if (installed === false) {
+        banner.className = "status-banner warning";
+        banner.textContent =
+            "کتابخانه Telethon روی این سیستم نصب نیست. کانال‌های عمومی با موتور وب کار می‌کنند؛ برای کانال‌های خصوصی در پوشه برنامه اجرا کنید: pip install -r requirements-telethon.txt";
+        return;
+    }
+
     if (info.authorized) {
         banner.className = "status-banner connected";
         banner.textContent = info.account
@@ -1009,7 +1017,7 @@ async function loadSettings(checkNetwork = false) {
         $("#telethonApiHash").value = s.telethon_api_hash_set ? "********" : "";
         $("#telethonPhone").value = s.telethon_phone || "";
 
-        updateTelethonBanner(data.telethon);
+        updateTelethonBanner(data.telethon, data.telethon_installed);
     } catch (err) {
         showToast(err.message, "error");
     }
@@ -1055,7 +1063,7 @@ function initSettingsEvents() {
                     method: "PUT",
                     body: collectSettingsPayload(),
                 });
-                updateTelethonBanner(data.telethon);
+                updateTelethonBanner(data.telethon, data.telethon_installed);
                 showToast("تنظیمات با موفقیت ذخیره شد.", "success");
                 await loadOverview();
             } catch (err) {
@@ -1127,7 +1135,7 @@ function initSettingsEvents() {
                     method: "PUT",
                     body: collectSettingsPayload(),
                 });
-                updateTelethonBanner(data.telethon);
+                updateTelethonBanner(data.telethon, data.telethon_installed);
                 showToast("کلیدهای API ذخیره شد.", "success");
             } catch (err) {
                 showToast(err.message, "error");
