@@ -22,6 +22,7 @@ const state = {
         date_to: "",
         media_type: "all",
     },
+    selectedPostIds: new Set(),
     editingChannelId: null,
     activeModalPost: null,
     logRefreshTimer: null,
@@ -193,6 +194,7 @@ function initTabs() {
 
             if (btn.dataset.tab === "logs") loadLogs();
             if (btn.dataset.tab === "settings") loadSettings();
+            if (btn.dataset.tab === "cleanup") loadCleanupTab();
             if (btn.dataset.tab === "posts") loadPosts();
         });
     });
@@ -363,19 +365,32 @@ async function loadChannels() {
     }
 }
 
-function populateChannelFilter() {
-    const select = $("#filterChannel");
+function fillChannelSelect(selector, { placeholder, showCount = false }) {
+    const select = $(selector);
     if (!select) return;
-    const current = select.value;
-    const options = ['<option value="">همه کانال‌ها</option>'].concat(
-        state.channels.map(
-            (ch) => `<option value="${ch.id}">${escapeHtml(ch.title)}</option>`
-        )
-    );
-    select.innerHTML = options.join("");
-    if (current && state.channels.some((c) => String(c.id) === String(current))) {
-        select.value = current;
+    const previous = select.value;
+    const head = `<option value="">${placeholder}</option>`;
+    select.innerHTML =
+        head +
+        state.channels
+            .map((ch) => {
+                const count = showCount ? ` (${toFa(ch.posts_count || 0)} مطلب)` : "";
+                const demo = ch.is_demo ? " (نمونه)" : "";
+                return `<option value="${ch.id}">${escapeHtml(ch.title)}${demo}${count}</option>`;
+            })
+            .join("");
+    if (previous && state.channels.some((c) => String(c.id) === String(previous))) {
+        select.value = previous;
     }
+}
+
+function populateChannelFilter() {
+    // جدول آرشیو
+    fillChannelSelect("#filterChannel", { placeholder: "همه کانال‌ها" });
+    // حذف گروهی بر اساس فیلتر
+    fillChannelSelect("#deleteScopeChannel", { placeholder: "همه کانال‌ها" });
+    // حذف کامل یک کانال
+    fillChannelSelect("#deleteSingleChannel", { placeholder: "انتخاب کانال...", showCount: true });
 }
 
 function initChannelForm() {
@@ -615,7 +630,7 @@ function renderPosts() {
     if (!items.length) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="empty-cell">
+                <td colspan="9" class="empty-cell">
                     مطلبی مطابق با فیلترهای فعلی یافت نشد. اگر هنوز هیچ مطلبی ندارید، ابتدا یک کانال اضافه کنید یا داده نمونه را بارگذاری نمایید.
                 </td>
             </tr>`;
@@ -624,8 +639,12 @@ function renderPosts() {
             .map((p) => {
                 const views = p.views === null || p.views === undefined ? "—" : formatNumberFa(p.views);
                 const snippet = escapeHtml(p.content || "[بدون متن]");
+                const checked = state.selectedPostIds.has(Number(p.id));
                 return `
-                <tr>
+                <tr class="${checked ? "row-selected" : ""}">
+                    <td class="select-col">
+                        <input type="checkbox" class="row-select" data-post-select="${p.id}" ${checked ? "checked" : ""} />
+                    </td>
                     <td>
                         <div class="ch-title-wrap">
                             <span class="ch-title">${escapeHtml(p.channel_title)}</span>
@@ -683,6 +702,8 @@ function renderPosts() {
     const next = $("#btnNextPage");
     if (prev) prev.disabled = state.posts.page <= 1;
     if (next) next.disabled = state.posts.page >= state.posts.totalPages;
+
+    syncSelectionUI();
 }
 
 async function loadPosts() {
@@ -1199,6 +1220,430 @@ async function runSeedDemo(button) {
     }
 }
 
+/* ------------------------------ Post selection ------------------------------ */
+
+function syncSelectionUI() {
+    const count = state.selectedPostIds.size;
+
+    const toolbar = $("#selectionToolbar");
+    if (toolbar) toolbar.classList.toggle("hidden", count === 0);
+
+    const countEl = $("#selectionCount");
+    if (countEl) countEl.textContent = toFa(count);
+
+    const cleanupCount = $("#cleanupSelectedCount");
+    if (cleanupCount) cleanupCount.textContent = toFa(count);
+
+    const selectedPreview = $("#selectedPreviewBox");
+    if (selectedPreview) {
+        if (count === 0) {
+            selectedPreview.className = "preview-box";
+            selectedPreview.textContent = "هیچ مطلبی انتخاب نشده است.";
+        } else {
+            selectedPreview.className = "preview-box danger";
+            selectedPreview.innerHTML = `<strong>${toFa(count)} مطلب</strong> برای حذف انتخاب شده است.`;
+        }
+    }
+
+    // header checkbox state
+    const header = $("#selectAllPosts");
+    if (header) {
+        const pageIds = state.posts.items.map((p) => Number(p.id));
+        const selectedOnPage = pageIds.filter((id) => state.selectedPostIds.has(id)).length;
+        header.checked = pageIds.length > 0 && selectedOnPage === pageIds.length;
+        header.indeterminate = selectedOnPage > 0 && selectedOnPage < pageIds.length;
+    }
+
+    const hint = $("#selectionHint");
+    if (hint) {
+        hint.textContent =
+            count > 0
+                ? "— می‌توانید فقط موارد تیک‌خورده را حذف کنید"
+                : "— برای حذف دستی، ردیف‌ها را تیک بزنید";
+    }
+}
+
+function togglePostSelection(postId, selected) {
+    const id = Number(postId);
+    if (selected) state.selectedPostIds.add(id);
+    else state.selectedPostIds.delete(id);
+
+    const input = document.querySelector(`input[data-post-select="${id}"]`);
+    if (input) {
+        input.checked = selected;
+        const row = input.closest("tr");
+        if (row) row.classList.toggle("row-selected", selected);
+    }
+    syncSelectionUI();
+}
+
+function selectAllOnPage(selected) {
+    state.posts.items.forEach((p) => {
+        const id = Number(p.id);
+        if (selected) state.selectedPostIds.add(id);
+        else state.selectedPostIds.delete(id);
+    });
+    renderPosts();
+}
+
+async function selectAllMatchingFilter() {
+    try {
+        const query = buildQuery({
+            channel_id: state.filters.channel_id,
+            search: state.filters.search,
+            date_from: state.filters.date_from,
+            date_to: state.filters.date_to,
+            media_type: state.filters.media_type,
+        });
+        const data = await apiFetch(`/api/posts/ids${query}`);
+        (data.ids || []).forEach((id) => state.selectedPostIds.add(Number(id)));
+        renderPosts();
+        showToast(`${toFa(data.total || 0)} مطلب از تمام نتایج فیلتر انتخاب شد.`, "success", 5000);
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+function clearSelection() {
+    state.selectedPostIds.clear();
+    renderPosts();
+}
+
+async function deleteSelectedPosts(button) {
+    const ids = Array.from(state.selectedPostIds);
+    if (!ids.length) {
+        showToast("هیچ مطلبی انتخاب نشده است.", "error");
+        return;
+    }
+
+    const confirmed = window.confirm(
+        `آیا از حذف ${toFa(ids.length)} مطلب انتخاب‌شده مطمئن هستید؟
+
+این عملیات قابل بازگشت نیست.`
+    );
+    if (!confirmed) return;
+
+    setBusy(button, true, "در حال حذف...");
+    try {
+        const result = await apiFetch("/api/posts/bulk-delete", {
+            method: "POST",
+            body: { post_ids: ids, reset_channel_cursors: true },
+        });
+        showToast(result.message || "حذف انجام شد.", "success", 6000);
+        state.selectedPostIds.clear();
+        await Promise.all([
+            loadChannels(),
+            loadOverview(),
+            loadPosts(),
+            loadLogs(),
+            loadCleanupTab(),
+        ]);
+    } catch (err) {
+        showToast(err.message, "error", 7000);
+    } finally {
+        setBusy(button, false);
+    }
+}
+
+/* ------------------------------ Cleanup / Bulk delete ------------------------------ */
+
+function collectDeleteScope() {
+    const channelValue = ($("#deleteScopeChannel") || {}).value || "";
+    const mediaValue = ($("#deleteScopeMedia") || {}).value || "all";
+    return {
+        channel_id: channelValue ? Number(channelValue) : null,
+        date_from: (($("#deleteScopeDateFrom") || {}).value || "").trim() || null,
+        date_to: (($("#deleteScopeDateTo") || {}).value || "").trim() || null,
+        media_type: mediaValue === "all" ? null : mediaValue,
+        search: (($("#deleteScopeSearch") || {}).value || "").trim() || null,
+        reset_channel_cursors: Boolean(($("#deleteResetCursors") || {}).checked),
+    };
+}
+
+function describeDeleteScope(scope) {
+    const parts = [];
+    if (scope.channel_id) {
+        const ch = state.channels.find((c) => Number(c.id) === scope.channel_id);
+        parts.push(`کانال «${ch ? ch.title : scope.channel_id}»`);
+    } else {
+        parts.push("همه کانال‌ها");
+    }
+    if (scope.date_from || scope.date_to) {
+        parts.push(`بازه تاریخ ${scope.date_from || "ابتدا"} تا ${scope.date_to || "امروز"}`);
+    }
+    if (scope.media_type) {
+        parts.push(`نوع محتوا: ${MEDIA_LABELS[scope.media_type] || scope.media_type}`);
+    }
+    if (scope.search) {
+        parts.push(`جستجو: «${scope.search}»`);
+    }
+    return parts.join(" • ");
+}
+
+async function loadCleanupTab() {
+    try {
+        const data = await apiFetch("/api/overview");
+        const stats = data.stats || {};
+        const postsEl = $("#cleanupTotalPosts");
+        const channelsEl = $("#cleanupTotalChannels");
+        if (postsEl) postsEl.textContent = formatNumberFa(stats.total_posts);
+        if (channelsEl) channelsEl.textContent = formatNumberFa(stats.total_channels);
+        syncSelectionUI();
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+async function previewScopedDelete() {
+    const box = $("#deletePreviewBox");
+    const scope = collectDeleteScope();
+    box.className = "preview-box";
+    box.textContent = "در حال شمارش ...";
+
+    try {
+        const query = buildQuery({
+            channel_id: scope.channel_id,
+            search: scope.search,
+            date_from: scope.date_from,
+            date_to: scope.date_to,
+            media_type: scope.media_type,
+            page: 1,
+            page_size: 1,
+        });
+        const data = await apiFetch(`/api/posts${query}`);
+        const total = data.total || 0;
+
+        if (total === 0) {
+            box.className = "preview-box safe";
+            box.textContent = "هیچ مطلبی مطابق این شرایط وجود ندارد؛ حذفی انجام نمی‌شود.";
+            return 0;
+        }
+
+        box.className = "preview-box danger";
+        box.innerHTML =
+            `<strong>${formatNumberFa(total)} مطلب</strong> مطابق شرایط زیر پیدا شد: <br>` +
+            `<span>${escapeHtml(describeDeleteScope(scope))}</span>`;
+        return total;
+    } catch (err) {
+        box.className = "preview-box danger";
+        box.textContent = err.message;
+        return -1;
+    }
+}
+
+async function runScopedDelete(button) {
+    const scope = collectDeleteScope();
+    const preview = await previewScopedDelete();
+    if (preview === 0) {
+        showToast("مطلبی برای حذف وجود ندارد.", "info");
+        return;
+    }
+
+    const confirmed = window.confirm(
+        `آیا از حذف ${preview > 0 ? toFa(preview) + " مطلب" : "مطالب"} مطابق شرایط زیر مطمئن هستید؟
+
+${describeDeleteScope(scope)}
+
+این عملیات قابل بازگشت نیست.`
+    );
+    if (!confirmed) return;
+
+    setBusy(button, true, "در حال حذف...");
+    try {
+        const result = await apiFetch("/api/posts/bulk-delete", { method: "POST", body: scope });
+        showToast(result.message || "حذف انجام شد.", "success", 6000);
+        const box = $("#deletePreviewBox");
+        if (box) {
+            box.className = "preview-box safe";
+            box.textContent = result.message || "حذف انجام شد.";
+        }
+        await Promise.all([
+            loadChannels(),
+            loadOverview(),
+            loadPosts(),
+            loadCleanupTab(),
+            loadLogs(),
+        ]);
+    } catch (err) {
+        showToast(err.message, "error", 7000);
+    } finally {
+        setBusy(button, false);
+    }
+}
+
+function resetDeleteScope() {
+    $("#deleteScopeChannel").value = "";
+    $("#deleteScopeMedia").value = "all";
+    $("#deleteScopeDateFrom").value = "";
+    $("#deleteScopeDateTo").value = "";
+    $("#deleteScopeSearch").value = "";
+    $("#deleteResetCursors").checked = true;
+    const box = $("#deletePreviewBox");
+    box.className = "preview-box";
+    box.textContent = "برای دیدن تعداد مطالب مطابق شرایط، روی «پیش‌نمایش» بزنید.";
+}
+
+function initCleanupEvents() {
+    // --- selection handling inside the archive table
+    const postsBody = $("#postsTableBody");
+    if (postsBody) {
+        postsBody.addEventListener("change", (event) => {
+            const box = event.target.closest("input[data-post-select]");
+            if (!box) return;
+            togglePostSelection(box.dataset.postSelect, box.checked);
+        });
+    }
+
+    const selectAll = $("#selectAllPosts");
+    if (selectAll) {
+        selectAll.addEventListener("change", () => selectAllOnPage(selectAll.checked));
+    }
+
+    const selectMatching = $("#btnSelectAllMatching");
+    if (selectMatching) selectMatching.addEventListener("click", selectAllMatchingFilter);
+
+    const clearBtn = $("#btnClearSelection");
+    if (clearBtn) clearBtn.addEventListener("click", clearSelection);
+
+    const clearBtn2 = $("#btnClearSelectionFromCleanup");
+    if (clearBtn2) clearBtn2.addEventListener("click", clearSelection);
+
+    const deleteSelected = $("#btnDeleteSelected");
+    if (deleteSelected) deleteSelected.addEventListener("click", () => deleteSelectedPosts(deleteSelected));
+
+    const deleteSelected2 = $("#btnDeleteSelectedFromCleanup");
+    if (deleteSelected2)
+        deleteSelected2.addEventListener("click", () => deleteSelectedPosts(deleteSelected2));
+
+    const goArchive = $("#btnGoToArchive");
+    if (goArchive) {
+        goArchive.addEventListener("click", () => {
+            const tabBtn = document.querySelector('[data-tab="posts"]');
+            if (tabBtn) tabBtn.click();
+        });
+    }
+
+    // --- scoped delete form
+    const form = $("#bulkDeleteForm");
+    if (form) {
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            runScopedDelete($("#btnApplyScopedDelete"));
+        });
+    }
+
+    const previewBtn = $("#btnPreviewDelete");
+    if (previewBtn) previewBtn.addEventListener("click", () => previewScopedDelete());
+
+    const resetBtn = $("#btnResetDeleteScope");
+    if (resetBtn) resetBtn.addEventListener("click", resetDeleteScope);
+
+    // --- danger zone
+    const purgePosts = $("#btnPurgePostsOnly");
+    if (purgePosts) {
+        purgePosts.addEventListener("click", async () => {
+            const confirmed = window.confirm(
+                `همه مطالب و گزارش‌های دریافت پاک شوند؟
+
+کانال‌ها با تنظیماتشان باقی می‌مانند و دریافت بعدی از ابتدا انجام می‌شود.
+
+این عملیات قابل بازگشت نیست.`
+            );
+            if (!confirmed) return;
+            setBusy(purgePosts, true, "در حال پاک‌سازی...");
+            try {
+                const res = await apiFetch("/api/posts/purge", {
+                    method: "POST",
+                    body: { keep_channels: true },
+                });
+                showToast(res.message, "success", 7000);
+                state.selectedPostIds.clear();
+                await Promise.all([loadChannels(), loadOverview(), loadPosts(), loadCleanupTab(), loadLogs()]);
+            } catch (err) {
+                showToast(err.message, "error", 7000);
+            } finally {
+                setBusy(purgePosts, false);
+            }
+        });
+    }
+
+    const purgeAll = $("#btnPurgeEverything");
+    if (purgeAll) {
+        purgeAll.addEventListener("click", async () => {
+            const typed = window.prompt(
+                `حذف کامل همه داده‌ها (کانال‌ها + مطالب + گزارش‌ها)
+
+برای تأیید، کلمه «حذف» را تایپ کنید:`
+            );
+            if (typed === null) return;
+            if (typed.trim() !== "حذف") {
+                showToast("عبارت تأیید درست نبود؛ عملیات لغو شد.", "error");
+                return;
+            }
+            setBusy(purgeAll, true, "در حال حذف همه داده‌ها...");
+            try {
+                const res = await apiFetch("/api/posts/purge", {
+                    method: "POST",
+                    body: { keep_channels: false },
+                });
+                showToast(res.message, "success", 7000);
+                state.selectedPostIds.clear();
+                await Promise.all([loadChannels(), loadOverview(), loadPosts(), loadCleanupTab(), loadLogs()]);
+            } catch (err) {
+                showToast(err.message, "error", 7000);
+            } finally {
+                setBusy(purgeAll, false);
+            }
+        });
+    }
+
+    const purgeLogs = $("#btnPurgeLogs");
+    if (purgeLogs) {
+        purgeLogs.addEventListener("click", async () => {
+            if (!window.confirm("همه گزارش‌های دریافت پاک شوند؟")) return;
+            setBusy(purgeLogs, true, "در حال پاک کردن...");
+            try {
+                const res = await apiFetch("/api/logs", { method: "DELETE" });
+                showToast(`${toFa(res.cleared || 0)} گزارش پاک شد.`, "success");
+                await Promise.all([loadCleanupTab(), loadLogs()]);
+            } catch (err) {
+                showToast(err.message, "error");
+            } finally {
+                setBusy(purgeLogs, false);
+            }
+        });
+    }
+
+    const deleteSingle = $("#btnDeleteSingleChannel");
+    if (deleteSingle) {
+        deleteSingle.addEventListener("click", async () => {
+            const value = $("#deleteSingleChannel").value;
+            if (!value) {
+                showToast("ابتدا یک کانال را انتخاب کنید.", "error");
+                return;
+            }
+            const ch = state.channels.find((c) => String(c.id) === String(value));
+            const confirmed = window.confirm(
+                `کانال «${ch ? ch.title : value}» با تمام مطالب و گزارش‌هایش حذف شود؟
+
+این عملیات قابل بازگشت نیست.`
+            );
+            if (!confirmed) return;
+            setBusy(deleteSingle, true, "در حال حذف...");
+            try {
+                await apiFetch(`/api/channels/${value}`, { method: "DELETE" });
+                showToast("کانال و تمام مطالب آن حذف شد.", "success");
+                state.selectedPostIds.clear();
+                await Promise.all([loadChannels(), loadOverview(), loadPosts(), loadCleanupTab(), loadLogs()]);
+            } catch (err) {
+                showToast(err.message, "error");
+            } finally {
+                setBusy(deleteSingle, false);
+            }
+        });
+    }
+}
+
 /* ------------------------------ Boot ------------------------------ */
 
 function initMiscEvents() {
@@ -1225,6 +1670,7 @@ async function boot() {
     initExports();
     initLogsEvents();
     initSettingsEvents();
+    initCleanupEvents();
 
     await loadOverview();
     await loadChannels();

@@ -104,6 +104,9 @@
             <button class="tab-btn" data-tab="settings" type="button">
                 ۴. تنظیمات، پروکسی و اکانت تلگرام
             </button>
+            <button class="tab-btn" data-tab="cleanup" type="button">
+                ۵. حذف و پاک‌سازی داده‌ها
+            </button>
         </nav>
 
         <!-- TAB 1: CHANNELS -->
@@ -257,6 +260,23 @@
                     </div>
                 </div>
 
+                <!-- Selection toolbar -->
+                <div id="selectionToolbar" class="selection-toolbar hidden">
+                    <div class="selection-info">
+                        <strong id="selectionCount">۰</strong> مطلب انتخاب شده است
+                        <span class="field-hint" id="selectionHint">— می‌توانید فقط موارد تیک‌خورده را حذف کنید</span>
+                    </div>
+                    <div class="row-actions">
+                        <button id="btnSelectAllMatching" type="button" class="btn btn-ghost btn-sm">
+                            انتخاب همه نتایج فیلتر (نه فقط این صفحه)
+                        </button>
+                        <button id="btnClearSelection" type="button" class="btn btn-outline btn-sm">لغو انتخاب</button>
+                        <button id="btnDeleteSelected" type="button" class="btn btn-danger btn-sm">
+                            حذف موارد انتخاب‌شده
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Filters Bar -->
                 <form id="postFiltersForm" class="filters-bar">
                     <div class="filter-item">
@@ -305,6 +325,7 @@
                     <table class="data-table">
                         <thead>
                             <tr>
+                                <th class="select-col"><input id="selectAllPosts" type="checkbox" title="انتخاب همه ردیف‌های این صفحه" /></th>
                                 <th>کانال</th>
                                 <th>شناسه پیام</th>
                                 <th>تاریخ انتشار</th>
@@ -317,7 +338,7 @@
                         </thead>
                         <tbody id="postsTableBody">
                             <tr>
-                                <td colspan="8" class="empty-cell">هنوز مطلبی ذخیره نشده است.</td>
+                                <td colspan="9" class="empty-cell">هنوز مطلبی ذخیره نشده است.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -524,6 +545,173 @@
                             <button id="btnSeedDemo" type="button" class="btn btn-outline">افزودن داده‌های نمونه آزمایشی</button>
                             <button id="btnClearDemo" type="button" class="btn btn-danger-ghost">حذف داده‌های آزمایشی</button>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 5: CLEANUP / BULK DELETE -->
+        <section id="tab-cleanup" class="tab-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">حذف گروهی مطالب آرشیو</h2>
+                    <p class="card-desc">
+                        می‌توانید همه مطالب را یک‌جا پاک کنید، یا فقط مطالب یک کانال خاص، یک بازه زمانی مشخص، یک نوع محتوا
+                        یا چند ردیف دستی انتخاب‌شده را حذف کنید. عملیات حذف برگشت‌پذیر نیست؛ پیش از تأیید، تعداد مطالب مطابق شرایط را ببینید.
+                    </p>
+                </div>
+
+                <div class="cleanup-summary">
+                    <div class="cleanup-stat">
+                        <span class="cleanup-stat-label">کل مطالب آرشیو</span>
+                        <span class="cleanup-stat-value" id="cleanupTotalPosts">۰</span>
+                    </div>
+                    <div class="cleanup-stat">
+                        <span class="cleanup-stat-label">کانال‌های ثبت‌شده</span>
+                        <span class="cleanup-stat-value" id="cleanupTotalChannels">۰</span>
+                    </div>
+                    <div class="cleanup-stat">
+                        <span class="cleanup-stat-label">در حال انتخاب در جدول</span>
+                        <span class="cleanup-stat-value" id="cleanupSelectedCount">۰</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mode A: scoped delete -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">۱) حذف بر اساس فیلتر (کانال / بازه زمانی / نوع محتوا / جستجو)</h2>
+                    <p class="card-desc">هر فیلتر را خالی بگذارید، یعنی «همه». مثلاً فقط کانال را انتخاب کنید تا تمام مطالب آن کانال حذف شود.</p>
+                </div>
+
+                <form id="bulkDeleteForm" class="stack-form">
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label for="deleteScopeChannel">کانال</label>
+                            <select id="deleteScopeChannel" class="form-control">
+                                <option value="">همه کانال‌ها</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="deleteScopeMedia">نوع محتوا</label>
+                            <select id="deleteScopeMedia" class="form-control">
+                                <option value="all">همه انواع</option>
+                                <option value="text">متن</option>
+                                <option value="photo">تصویر</option>
+                                <option value="video">ویدیو</option>
+                                <option value="document">فایل پیوست</option>
+                                <option value="voice">صوت</option>
+                                <option value="poll">نظرسنجی</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label for="deleteScopeDateFrom">از تاریخ (شمسی یا میلادی)</label>
+                            <input id="deleteScopeDateFrom" type="text" class="form-control ltr-input" placeholder="1405/08/01 یا 2026-11-01" />
+                        </div>
+                        <div class="form-group">
+                            <label for="deleteScopeDateTo">تا تاریخ</label>
+                            <input id="deleteScopeDateTo" type="text" class="form-control ltr-input" placeholder="1405/08/30 یا 2026-11-30" />
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="deleteScopeSearch">جستجو در متن یا آدرس مطلب (اختیاری)</label>
+                        <input id="deleteScopeSearch" type="text" class="form-control" placeholder="مثلاً: تبلیغات" />
+                        <small class="field-hint">اگر این کادر را پر کنید، فقط مطالبی حذف می‌شوند که این عبارت در متن یا آدرس آن‌ها باشد.</small>
+                    </div>
+
+                    <div class="delete-option-box">
+                        <label class="checkbox-label">
+                            <input id="deleteResetCursors" type="checkbox" checked />
+                            <span>
+                                شناسه آخرین پیام (last_message_id) کانال‌های متأثر ریست شود
+                                <small class="field-hint block-hint">
+                                    توصیه‌شده: پس از حذف، دریافت بعدی از ابتدا انجام می‌شود و همان ۱۰ مطلب آخر دوباره ذخیره می‌گردند.
+                                    اگر تیک را بردارید، مطالبی که حذف کرده‌اید دیگر دوباره دریافت نخواهند شد.
+                                </small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="preview-box" id="deletePreviewBox">
+                        <span>برای دیدن تعداد مطالب مطابق شرایط، روی «پیش‌نمایش» بزنید.</span>
+                    </div>
+
+                    <div class="form-footer-between">
+                        <div class="row-actions">
+                            <button id="btnPreviewDelete" type="button" class="btn btn-outline">پیش‌نمایش تعداد</button>
+                            <button id="btnApplyScopedDelete" type="submit" class="btn btn-danger">حذف مطالب این فیلتر</button>
+                        </div>
+                        <button id="btnResetDeleteScope" type="button" class="btn btn-ghost btn-sm">پاک کردن فیلترها</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Mode B: selected rows -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">۲) حذف ردیف‌های انتخاب‌شده از جدول آرشیو</h2>
+                    <p class="card-desc">
+                        در زبانه «آرشیو مطالب» کنار هر مطلب یک چک‌باکس هست؛ ردیف‌های مورد نظر را تیک بزنید و از این‌جا حذف کنید.
+                    </p>
+                </div>
+
+                <div class="selected-summary">
+                    <div class="preview-box" id="selectedPreviewBox">
+                        <span>هیچ مطلبی انتخاب نشده است.</span>
+                    </div>
+                    <div class="row-actions">
+                        <button id="btnGoToArchive" type="button" class="btn btn-outline btn-sm">رفتن به جدول آرشیو</button>
+                        <button id="btnClearSelectionFromCleanup" type="button" class="btn btn-ghost btn-sm">لغو انتخاب</button>
+                        <button id="btnDeleteSelectedFromCleanup" type="button" class="btn btn-danger">حذف موارد انتخاب‌شده</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Danger zone -->
+            <div class="card danger-card">
+                <div class="card-header">
+                    <h2 class="card-title danger-title">۳) پاک‌سازی کلی (Danger Zone)</h2>
+                    <p class="card-desc">این عملیات کل آرشیو را پاک می‌کند و قابل بازگشت نیست. پیشنهاد می‌شود ابتدا از زبانه آرشیو یک خروجی SQLite بگیرید.</p>
+                </div>
+
+                <div class="danger-row">
+                    <div>
+                        <strong>حذف تمام مطالب و گزارش‌ها، با نگه داشتن لیست کانال‌ها</strong>
+                        <div class="field-hint">کانال‌ها با تنظیمات و زمان‌بندی خود باقی می‌مانند و دریافت بعدی از صفر انجام می‌شود.</div>
+                    </div>
+                    <button id="btnPurgePostsOnly" type="button" class="btn btn-danger">پاک کردن همه مطالب</button>
+                </div>
+
+                <div class="danger-row">
+                    <div>
+                        <strong>حذف کامل همه داده‌ها (کانال‌ها + مطالب + گزارش‌ها)</strong>
+                        <div class="field-hint">برنامه به حالت اولیه برمی‌گردد؛ تنظیمات پروکسی و Telethon حفظ می‌شود.</div>
+                    </div>
+                    <button id="btnPurgeEverything" type="button" class="btn btn-danger">حذف کامل همه داده‌ها</button>
+                </div>
+
+                <div class="danger-row">
+                    <div>
+                        <strong>پاک کردن تاریخچه گزارش‌های دریافت</strong>
+                        <div class="field-hint">فقط جدول گزارش‌ها خالی می‌شود؛ مطالب و کانال‌ها دست‌نخورده می‌مانند.</div>
+                    </div>
+                    <button id="btnPurgeLogs" type="button" class="btn btn-danger-ghost">پاک کردن گزارش‌ها</button>
+                </div>
+
+                <div class="danger-row">
+                    <div>
+                        <strong>حذف کامل یک کانال با تمام مطالب آن</strong>
+                        <div class="field-hint">برای حذف یک کانال خاص به‌همراه مطالب و گزارش‌هایش.</div>
+                    </div>
+                    <div class="row-actions">
+                        <select id="deleteSingleChannel" class="form-control compact-select">
+                            <option value="">انتخاب کانال...</option>
+                        </select>
+                        <button id="btnDeleteSingleChannel" type="button" class="btn btn-danger">حذف کانال</button>
                     </div>
                 </div>
             </div>
