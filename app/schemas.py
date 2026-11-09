@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -79,3 +79,18 @@ class PurgeRequest(BaseModel):
         default=True,
         description="کانال‌ها حفظ شوند (فقط مطالب پاک شود) یا همه چیز حذف شود",
     )
+
+
+class BackupRestoreRequest(BaseModel):
+    """بازیابی فایل پشتیبان (محتوای JSON که از همان فایل خوانده شده)."""
+
+    mode: Literal["merge", "replace"] = Field(
+        default="merge",
+        description="merge: فقط افزودن/به‌روزرسانی — replace: پاک کردن فهرست و بازگردانی کامل",
+    )
+    restore_settings: bool = Field(default=True, description="تنظیمات موجود در فایل هم اعمال شود")
+    overwrite_settings: bool = Field(
+        default=False,
+        description="اگر true باشد، تنظیمات فعلی با مقادیر فایل جایگزین می‌شوند",
+    )
+    payload: Dict[str, Any] = Field(..., description="محتوای کامل فایل پشتیبان")

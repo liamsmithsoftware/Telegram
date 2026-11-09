@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from app.collectors.base import CollectorError
@@ -13,6 +14,7 @@ from app import config as app_config
 from app.config import DEFAULT_TIMEZONE
 from app.database import DatabaseManager
 from app.schemas import (
+    BackupRestoreRequest,
     BulkDeleteRequest,
     ChannelCreateRequest,
     ChannelResetRequest,
@@ -362,6 +364,192 @@ async def purge_archive(payload: PurgeRequest, request: Request) -> Dict[str, An
             f"{to_persian_number(result['deleted_logs'])} گزارش."
         )
     return {**result, "message": message}
+
+
+# ------------------------------------------------------------------
+# Backup / Restore (channels + settings)
+# ------------------------------------------------------------------
+MAX_BACKUP_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+@router.get("/backup/export")
+async def export_backup(
+    request: Request,
+    include_settings: bool = Query(default=True, description="تنظیمات هم در فایل باشد"),
+    include_secrets: bool = Query(
+        default=False,
+        description="کلیدهای حساس (api_hash، رمز پروکسی) هم ذخیره شوند — پیش‌فرض: خیر",
+    ),
+    only_active: bool = Query(default=False, description="فقط کانال‌های فعال"),
+) -> Response:
+    """دانلود فایل پشتیبان JSON شامل لیست کانال‌ها، زمان‌بندی و تنظیمات."""
+    db = _get_db(request)
+    payload = db.create_backup_payload(
+        include_settings=include_settings,
+        include_secrets=include_secrets,
+        only_active=only_active,
+    )
+
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    stamp = utc_now().strftime("%Y%m%d_%H%M%S")
+    filename = f"telegram_backup_{stamp}.json"
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/backup/inspect")
+async def inspect_backup(request: Request) -> Dict[str, Any]:
+    """پیش‌نمایش محتوای پشتیبان فعلی (بدون دانلود فایل)."""
+    db = _get_db(request)
+    payload = db.create_backup_payload(include_settings=True, include_secrets=False)
+    return {
+        "format": payload["format"],
+        "format_version": payload["format_version"],
+        "created_at": payload["created_at"],
+        "counts": payload["counts"],
+        "channels": [
+            {
+                "title": ch["title"],
+                "channel_input": ch["channel_input"],
+                "interval_value": ch["interval_value"],
+                "interval_unit": ch["interval_unit"],
+                "is_active": ch["is_active"],
+                "last_message_id": ch["last_message_id"],
+            }
+            for ch in payload["channels"]
+        ],
+        "settings": payload["settings"],
+    }
+
+
+def _parse_backup_bytes(raw: bytes) -> Dict[str, Any]:
+    if not raw:
+        raise HTTPException(status_code=400, detail="فایل پشتیبان خالی است.")
+    if len(raw) > MAX_BACKUP_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="حجم فایل پشتیبان بیش از حد مجاز (۵ مگابایت) است.")
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="فایل انتخاب‌شده یک JSON معتبر نیست. لطفاً همان فایل پشتیبان برنامه را انتخاب کنید.",
+        ) from exc
+
+
+def _run_restore(db: DatabaseManager, data: Any, options: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        report = db.restore_from_backup(data, **options)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    summary_bits = []
+    if report["added_channels"]:
+        summary_bits.append(f"{to_persian_number(report['added_channels'])} کانال جدید اضافه شد")
+    if report["updated_channels"]:
+        summary_bits.append(f"{to_persian_number(report['updated_channels'])} کانال به‌روزرسانی شد")
+    if report["removed_channels"]:
+        summary_bits.append(f"{to_persian_number(report['removed_channels'])} کانال قبلی حذف شد")
+    if report["restored_settings"]:
+        summary_bits.append(f"{to_persian_number(report['restored_settings'])} تنظیم اعمال شد")
+    if report["skipped_channels"]:
+        summary_bits.append(f"{to_persian_number(report['skipped_channels'])} مورد نامعتبر نادیده گرفته شد")
+
+    report["message"] = (
+        "بازیابی با موفقیت انجام شد: " + "، ".join(summary_bits) + "."
+        if summary_bits
+        else "بازیابی انجام شد ولی فایل، کانال یا تنظیم قابل اعمالی نداشت."
+    )
+    return report
+
+
+@router.post("/backup/restore")
+async def restore_backup(payload: BackupRestoreRequest, request: Request) -> Dict[str, Any]:
+    """بازیابی پشتیبان از محتوای JSON (برای استفاده برنامه‌ای / API)."""
+    db = _get_db(request)
+    return _run_restore(
+        db,
+        payload.payload,
+        {
+            "mode": payload.mode,
+            "restore_settings": payload.restore_settings,
+            "overwrite_settings": payload.overwrite_settings,
+        },
+    )
+
+
+@router.post("/backup/restore-file")
+async def restore_backup_from_file(
+    request: Request,
+    file: UploadFile = File(..., description="فایل پشتیبان .json"),
+    mode: str = Query(default="merge", pattern="^(merge|replace)$"),
+    restore_settings: bool = Query(default=True),
+    overwrite_settings: bool = Query(default=False),
+) -> Dict[str, Any]:
+    """آپلود مستقیم فایل پشتیبان و بازیابی آن."""
+    db = _get_db(request)
+    raw = await file.read()
+    data = _parse_backup_bytes(raw)
+    return _run_restore(
+        db,
+        data,
+        {
+            "mode": mode,
+            "restore_settings": restore_settings,
+            "overwrite_settings": overwrite_settings,
+        },
+    )
+
+
+@router.post("/backup/validate-file")
+async def validate_backup_file(
+    request: Request,
+    file: UploadFile = File(..., description="فایل پشتیبان .json"),
+) -> Dict[str, Any]:
+    """بررسی صحت فایل پشتیبان پیش از بازیابی (بدون تغییر داده‌ها)."""
+    db = _get_db(request)
+    raw = await file.read()
+    data = _parse_backup_bytes(raw)
+    try:
+        parsed = db.validate_backup_payload(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing_keys = {c["channel_key"] for c in db.list_channels()}
+    new_count = 0
+    for raw_ch in parsed["channels"]:
+        try:
+            key = parse_channel_input(raw_ch["channel_input"]).channel_key
+        except ValueError:
+            continue
+        if key not in existing_keys:
+            new_count += 1
+
+    return {
+        "valid": True,
+        "format_version": parsed["format_version"],
+        "created_at": parsed["created_at"],
+        "note": parsed["note"],
+        "channels_in_file": len(parsed["channels"]),
+        "new_channels": new_count,
+        "existing_channels": len(parsed["channels"]) - new_count,
+        "settings_in_file": len(parsed["settings"]),
+        "secrets_included": any(
+            key in parsed["settings"]
+            for key in ("telethon_api_hash", "telethon_phone", "proxy_username", "proxy_password")
+        ),
+        "settings_keys": sorted(parsed["settings"].keys()),
+        "message": (
+            f"فایل معتبر است: {to_persian_number(len(parsed['channels']))} کانال "
+            f"({to_persian_number(new_count)} جدید) و "
+            f"{to_persian_number(len(parsed['settings']))} تنظیم."
+        ),
+    }
 
 
 # ------------------------------------------------------------------
