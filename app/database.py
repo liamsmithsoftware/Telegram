@@ -11,6 +11,17 @@ from app.config import DB_PATH, DEFAULT_INITIAL_LIMIT, DEFAULT_TIMEZONE
 from app.utils.channel_parser import ParsedChannel
 from app.utils.jalali import format_iso_utc, split_datetime, utc_now, utc_now_iso
 
+BACKUP_FORMAT_NAME = "telegram-channel-collector-backup"
+BACKUP_FORMAT_VERSION = 1
+
+# این تنظیمات هرگز به‌صورت پیش‌فرض در فایل پشتیبان نوشته نمی‌شوند
+BACKUP_SECRET_SETTING_KEYS = {
+    "telethon_api_hash",
+    "telethon_phone",
+    "proxy_username",
+    "proxy_password",
+}
+
 DEFAULT_SETTINGS: Dict[str, str] = {
     "collector_mode": "auto",  # 'auto' | 'web' | 'telethon'
     "timezone": DEFAULT_TIMEZONE,
@@ -948,6 +959,294 @@ class DatabaseManager:
             "deleted_channels": int(deleted_channels),
             "channels_kept": bool(keep_channels),
         }
+
+    # ------------------------------------------------------------------
+    # Backup / restore (portable JSON snapshot)
+    # ------------------------------------------------------------------
+    def get_backup_settings(self, *, include_secrets: bool = False) -> Dict[str, str]:
+        """
+        تنظیماتی که در فایل پشتیبان نوشته می‌شوند.
+        کلیدهای حساس (api_hash، رمز پروکسی) به‌صورت پیش‌فرض حذف می‌شوند تا
+        فایل پشتیبان را بتوان با خیال راحت جابه‌جا/آرشیو کرد.
+        """
+        settings = self.get_settings()
+        snapshot: Dict[str, str] = {}
+        for key, value in settings.items():
+            if key not in DEFAULT_SETTINGS:
+                continue
+            if not include_secrets and key in BACKUP_SECRET_SETTING_KEYS:
+                continue
+            snapshot[key] = str(value or "")
+        return snapshot
+
+    def create_backup_payload(
+        self,
+        *,
+        include_settings: bool = True,
+        include_secrets: bool = False,
+        only_active: bool = False,
+        channel_ids: Optional[List[int]] = None,
+        note: Optional[str] = None,
+        app_version: str = "1.0.0",
+    ) -> Dict[str, Any]:
+        """
+        ساخت ساختار JSON پشتیبان: فقط «لیست کانال‌ها + تنظیمات + شناسه آخرین پیام».
+        مطالب آرشیو در این فایل نیست (برای آرشیو از خروجی SQLite استفاده کنید).
+        """
+        selected = set(int(cid) for cid in channel_ids) if channel_ids else None
+
+        channels_payload: List[Dict[str, Any]] = []
+        for ch in self.list_channels():
+            if selected is not None and int(ch["id"]) not in selected:
+                continue
+            if only_active and not ch.get("is_active"):
+                continue
+            channels_payload.append(
+                {
+                    "channel_input": ch.get("channel_input") or ch.get("canonical_url"),
+                    "channel_key": ch.get("channel_key"),
+                    "username": ch.get("username"),
+                    "title": ch.get("title"),
+                    "is_private": bool(ch.get("is_private")),
+                    "interval_value": ch.get("interval_value"),
+                    "interval_unit": ch.get("interval_unit"),
+                    "initial_limit": ch.get("initial_limit"),
+                    "is_active": bool(ch.get("is_active")),
+                    "is_demo": bool(ch.get("is_demo")),
+                    "last_message_id": ch.get("last_message_id"),
+                    "last_status": ch.get("last_status"),
+                    "created_at": ch.get("created_at"),
+                }
+            )
+
+        payload: Dict[str, Any] = {
+            "format": BACKUP_FORMAT_NAME,
+            "format_version": BACKUP_FORMAT_VERSION,
+            "app_version": app_version,
+            "created_at": utc_now_iso(),
+            "note": (note or "").strip(),
+            "counts": {
+                "channels": len(channels_payload),
+                "settings": 0,
+            },
+            "channels": channels_payload,
+            "settings": {},
+        }
+
+        if include_settings:
+            backup_settings = self.get_backup_settings(include_secrets=include_secrets)
+            payload["settings"] = backup_settings
+            payload["counts"]["settings"] = len(backup_settings)
+
+        payload["secrets_included"] = bool(include_settings and include_secrets)
+        return payload
+
+    @staticmethod
+    def validate_backup_payload(data: Any) -> Dict[str, Any]:
+        """اعتبارسنجی فایل پشتیبان و نرمال‌سازی مقادیر آن."""
+        if not isinstance(data, dict):
+            raise ValueError("فایل پشتیبان معتبر نیست: ساختار JSON باید یک شیء باشد.")
+
+        if data.get("format") != BACKUP_FORMAT_NAME:
+            raise ValueError(
+                "این فایل، پشتیبان این برنامه نیست (شناسه format پیدا نشد یا اشتباه است)."
+            )
+
+        version = int(data.get("format_version") or 0)
+        if version < 1 or version > BACKUP_FORMAT_VERSION:
+            raise ValueError(
+                f"نسخه فایل پشتیبان ({version}) توسط این نسخه از برنامه پشتیبانی نمی‌شود."
+            )
+
+        channels = data.get("channels")
+        if channels is None:
+            channels = []
+        if not isinstance(channels, list):
+            raise ValueError("بخش «کانال‌ها» در فایل پشتیبان معتبر نیست.")
+
+        settings = data.get("settings") or {}
+        if not isinstance(settings, dict):
+            raise ValueError("بخش «تنظیمات» در فایل پشتیبان معتبر نیست.")
+
+        clean_channels: List[Dict[str, Any]] = []
+        for index, raw in enumerate(channels, start=1):
+            if not isinstance(raw, dict):
+                raise ValueError(f"کانال شماره {index} در فایل پشتیبان معتبر نیست.")
+            target = str(raw.get("channel_input") or raw.get("username") or "").strip()
+            if not target:
+                raise ValueError(f"کانال شماره {index} آدرس/نام کاربری ندارد.")
+            clean_channels.append({**raw, "channel_input": target})
+
+        return {
+            "format": BACKUP_FORMAT_NAME,
+            "format_version": version,
+            "created_at": data.get("created_at"),
+            "note": data.get("note") or "",
+            "channels": clean_channels,
+            "settings": settings,
+        }
+
+    def restore_from_backup(
+        self,
+        data: Any,
+        *,
+        mode: str = "merge",
+        restore_settings: bool = True,
+        overwrite_settings: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        بازیابی پشتیبان.
+
+        mode="merge"   (پیش‌فرض): کانال‌های جدید اضافه می‌شوند، کانال‌های موجود
+                       به‌روزرسانی می‌شوند، هیچ کانالی حذف نمی‌شود.
+        mode="replace"         : ابتدا فهرست کانال‌ها کاملاً پاک می‌شود، سپس فایل
+                       پشتیبان بارگذاری می‌گردد (بازگردانی دقیق وضعیت قبلی).
+        """
+        from app.utils.channel_parser import parse_channel_input
+
+        if mode not in ("merge", "replace"):
+            raise ValueError("حالت بازیابی باید merge یا replace باشد.")
+
+        payload = self.validate_backup_payload(data)
+        report: Dict[str, Any] = {
+            "mode": mode,
+            "added_channels": 0,
+            "updated_channels": 0,
+            "skipped_channels": 0,
+            "removed_channels": 0,
+            "restored_settings": 0,
+            "cursor_restored": 0,
+            "errors": [],
+            "warnings": [],
+        }
+
+        if mode == "replace":
+            report["removed_channels"] = int(self.clear_all_channels())
+
+        for raw in payload["channels"]:
+            try:
+                parsed = parse_channel_input(raw["channel_input"])
+            except ValueError as exc:
+                report["skipped_channels"] += 1
+                report["errors"].append(f"{raw['channel_input']}: {exc}")
+                continue
+
+            interval_value = raw.get("interval_value")
+            interval_unit = str(raw.get("interval_unit") or "hours").lower().strip()
+            if interval_unit not in ("minutes", "hours", "days"):
+                interval_unit = "hours"
+            try:
+                interval_value = float(interval_value) if interval_value is not None else 6.0
+                if interval_value <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                interval_value = 6.0
+
+            initial_limit = raw.get("initial_limit")
+            try:
+                initial_limit = int(initial_limit) if initial_limit is not None else DEFAULT_INITIAL_LIMIT
+                if not 1 <= initial_limit <= 100:
+                    raise ValueError
+            except (TypeError, ValueError):
+                initial_limit = DEFAULT_INITIAL_LIMIT
+
+            existing = self.get_channel_by_key(parsed.channel_key)
+            title = (raw.get("title") or "").strip() or None
+
+            if existing:
+                channel_id = int(existing["id"])
+                self.update_channel(
+                    channel_id,
+                    title=title or existing["title"],
+                    interval_value=interval_value,
+                    interval_unit=interval_unit,
+                    initial_limit=initial_limit,
+                    is_active=bool(raw.get("is_active", True)),
+                )
+                report["updated_channels"] += 1
+            else:
+                try:
+                    created = self.create_channel(
+                        parsed=parsed,
+                        interval_value=interval_value,
+                        interval_unit=interval_unit,
+                        initial_limit=initial_limit,
+                        title=title,
+                        is_active=bool(raw.get("is_active", True)),
+                        is_demo=bool(raw.get("is_demo", False)),
+                    )
+                except ValueError as exc:
+                    report["skipped_channels"] += 1
+                    report["errors"].append(f"{raw['channel_input']}: {exc}")
+                    continue
+                channel_id = int(created["id"])
+                report["added_channels"] += 1
+
+            # بازگردانی شناسه آخرین پیام فقط اگر در فایل باشد و کانال مطالب داشته باشد
+            last_message_id = raw.get("last_message_id")
+            if last_message_id is not None:
+                try:
+                    cursor = int(last_message_id)
+                except (TypeError, ValueError):
+                    cursor = None
+                if cursor is not None and cursor > 0:
+                    has_posts = self.count_posts_for_scope(channel_id=channel_id) > 0
+                    if has_posts:
+                        with self.transaction() as conn:
+                            conn.execute(
+                                """
+                                UPDATE channels
+                                SET last_message_id = ?, last_status = 'ok', updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (cursor, utc_now_iso(), channel_id),
+                            )
+                        report["cursor_restored"] += 1
+                    else:
+                        report["warnings"].append(
+                            f"{parsed.channel_key}: شناسه آخرین پیام بازگردانی نشد چون هیچ مطلبی "
+                            "از این کانال در آرشیو نیست (دریافت بعدی از ابتدا انجام می‌شود)."
+                        )
+
+        if restore_settings and payload["settings"]:
+            incoming = payload["settings"]
+            allowed = {k: str(v) for k, v in incoming.items() if k in DEFAULT_SETTINGS and v is not None}
+
+            if not allowed:
+                pass
+            elif overwrite_settings:
+                self.update_settings(allowed)
+                report["restored_settings"] = len(allowed)
+            else:
+                # بدون overwrite فقط کلیدهای خالی/تنظیم‌نشده پر می‌شوند
+                current = self.get_settings()
+                fillable = {
+                    key: value
+                    for key, value in allowed.items()
+                    if key not in BACKUP_SECRET_SETTING_KEYS
+                    and not str(current.get(key, "")).strip()
+                    and str(value).strip()
+                }
+                if fillable:
+                    self.update_settings(fillable)
+                report["restored_settings"] = len(fillable)
+
+        return report
+
+    def get_channel_by_key(self, channel_key: str) -> Optional[Dict[str, Any]]:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM channels WHERE channel_key = ?", (channel_key,)
+            ).fetchone()
+        if not row:
+            return None
+        return self.get_channel(int(row["id"]))
+
+    def clear_all_channels(self) -> int:
+        """حذف همه کانال‌ها به‌همراه مطالب و گزارش‌هایشان (برای حالت replace)."""
+        with self.transaction() as conn:
+            removed = conn.execute("DELETE FROM channels").rowcount
+        return int(removed)
 
     def delete_post(self, post_id: int) -> bool:
         with self.transaction() as conn:

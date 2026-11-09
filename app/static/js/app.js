@@ -195,6 +195,10 @@ function initTabs() {
             if (btn.dataset.tab === "logs") loadLogs();
             if (btn.dataset.tab === "settings") loadSettings();
             if (btn.dataset.tab === "cleanup") loadCleanupTab();
+            if (btn.dataset.tab === "backup") {
+                const box = $("#backupPreviewBox");
+                if (box) box.classList.add("hidden");
+            }
             if (btn.dataset.tab === "posts") loadPosts();
         });
     });
@@ -1483,6 +1487,226 @@ function resetDeleteScope() {
     box.textContent = "برای دیدن تعداد مطالب مطابق شرایط، روی «پیش‌نمایش» بزنید.";
 }
 
+/* ------------------------------ Backup / Restore ------------------------------ */
+
+function backupOptions() {
+    return {
+        includeSettings: Boolean(($("#backupIncludeSettings") || {}).checked),
+        includeSecrets: Boolean(($("#backupIncludeSecrets") || {}).checked),
+        onlyActive: Boolean(($("#backupOnlyActive") || {}).checked),
+    };
+}
+
+function downloadBackup() {
+    const opts = backupOptions();
+    const query = buildQuery({
+        include_settings: String(opts.includeSettings),
+        include_secrets: String(opts.includeSecrets),
+        only_active: String(opts.onlyActive),
+    });
+    triggerDownload(`/api/backup/export${query}`);
+    showToast("فایل پشتیبان در حال دانلود است...", "success");
+}
+
+async function previewBackup() {
+    const box = $("#backupPreviewBox");
+    box.classList.remove("hidden");
+    box.className = "preview-box";
+    box.textContent = "در حال ساخت پیش‌نمایش ...";
+
+    try {
+        const data = await apiFetch("/api/backup/inspect");
+        const counts = data.counts || {};
+        const rows = (data.channels || [])
+            .slice(0, 12)
+            .map(
+                (ch) =>
+                    `<li>${escapeHtml(ch.title || ch.channel_input)} — ${intervalLabelFa(
+                        ch.interval_value,
+                        ch.interval_unit
+                    )} — ${ch.is_active ? "فعال" : "غیرفعال"}</li>`
+            )
+            .join("");
+        const more =
+            (data.channels || []).length > 12
+                ? `<li>… و ${toFa((data.channels || []).length - 12)} کانال دیگر</li>`
+                : "";
+
+        box.className = "preview-box";
+        box.innerHTML =
+            `<strong>${formatNumberFa(counts.channels || 0)} کانال</strong> و ` +
+            `<strong>${formatNumberFa(counts.settings || 0)} تنظیم</strong> در این پشتیبان قرار می‌گیرد.` +
+            (rows ? `<ul class="backup-list">${rows}${more}</ul>` : "") +
+            `<div class="field-hint">کلیدهای حساس: ${data.settings && data.settings.telethon_api_hash ? "شامل می‌شود" : "شامل نمی‌شود"}</div>`;
+    } catch (err) {
+        box.className = "preview-box danger";
+        box.textContent = err.message;
+    }
+}
+
+function restartWithNewSettings() {
+    // Some settings (proxy / timezone) are read live, but a reload guarantees a clean state
+    showToast("برای اعمال کامل تنظیمات، صفحه بازخوانی می‌شود...", "info", 2500);
+    window.setTimeout(() => window.location.reload(), 1200);
+}
+
+async function validateBackupFile() {
+    const input = $("#backupFileInput");
+    const box = $("#restorePreviewBox");
+    if (!input || !input.files || !input.files.length) {
+        showToast("ابتدا فایل پشتیبان را انتخاب کنید.", "error");
+        return null;
+    }
+
+    box.classList.remove("hidden");
+    box.className = "preview-box";
+    box.textContent = "در حال بررسی فایل ...";
+
+    const form = new FormData();
+    form.append("file", input.files[0]);
+
+    try {
+        const res = await fetch("/api/backup/validate-file", { method: "POST", body: form });
+        if (!res.ok) {
+            let detail = `خطای سرور (کد ${res.status})`;
+            try {
+                const body = await res.json();
+                if (body && body.detail) detail = body.detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+        const data = await res.json();
+
+        box.className = "preview-box safe";
+        box.innerHTML =
+            `<strong>فایل معتبر است.</strong><br>` +
+            `کانال‌های داخل فایل: ${formatNumberFa(data.channels_in_file)} ` +
+            `(${formatNumberFa(data.new_channels)} جدید، ${formatNumberFa(data.existing_channels)} موجود)<br>` +
+            `تنظیمات: ${formatNumberFa(data.settings_in_file)} مورد` +
+            (data.created_at ? `<br>تاریخ ساخت فایل: <span class="ltr-text">${toFa(data.created_at)}</span>` : "") +
+            (data.secrets_included ? `<br><span class="field-hint">این فایل شامل کلیدهای حساس است.</span>` : "") +
+            (data.note ? `<br>یادداشت: ${escapeHtml(data.note)}` : "");
+        return data;
+    } catch (err) {
+        box.className = "preview-box danger";
+        box.textContent = err.message;
+        return null;
+    }
+}
+
+async function restoreBackup(button) {
+    const input = $("#backupFileInput");
+    if (!input || !input.files || !input.files.length) {
+        showToast("ابتدا فایل پشتیبان را انتخاب کنید.", "error");
+        return;
+    }
+
+    const modeEl = document.querySelector('input[name="restoreMode"]:checked');
+    const mode = modeEl ? modeEl.value : "merge";
+    const restoreSettings = $("#restoreSettingsCheck").checked;
+    const overwriteSettings = $("#restoreOverwriteCheck").checked;
+
+    const modeText = mode === "replace" ? "جایگزینی کامل (کانال‌های فعلی حذف می‌شوند)" : "ادغام با فهرست فعلی";
+    const confirmed = window.confirm(
+        `بازیابی این فایل پشتیبان انجام شود؟
+
+روش: ${modeText}
+تنظیمات: ${restoreSettings ? "اعمال شود" : "اعمال نشود"}
+
+${mode === "replace" ? "هشدار: تمام کانال‌ها و مطالب فعلی پاک می‌شوند." : ""}
+
+این عملیات قابل بازگشت نیست.`
+    );
+    if (!confirmed) return;
+
+    setBusy(button, true, "در حال بازیابی...");
+    const form = new FormData();
+    form.append("file", input.files[0]);
+
+    const query = buildQuery({
+        mode,
+        restore_settings: String(restoreSettings),
+        overwrite_settings: String(overwriteSettings),
+    });
+
+    try {
+        const res = await fetch(`/api/backup/restore-file${query}`, { method: "POST", body: form });
+        if (!res.ok) {
+            let detail = `خطای سرور (کد ${res.status})`;
+            try {
+                const body = await res.json();
+                if (body && body.detail) detail = body.detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+        const data = await res.json();
+
+        const box = $("#restorePreviewBox");
+        box.classList.remove("hidden");
+        box.className = "preview-box safe";
+        box.innerHTML =
+            `<strong>${escapeHtml(data.message || "بازیابی انجام شد.")}</strong>` +
+            (data.errors && data.errors.length
+                ? `<ul class="backup-list">${data.errors
+                      .slice(0, 6)
+                      .map((e) => `<li>${escapeHtml(e)}</li>`)
+                      .join("")}</ul>`
+                : "") +
+            (data.warnings && data.warnings.length
+                ? `<ul class="backup-list">${data.warnings
+                      .slice(0, 4)
+                      .map((w) => `<li>${escapeHtml(w)}</li>`)
+                      .join("")}</ul>`
+                : "");
+
+        showToast(data.message || "بازیابی انجام شد.", "success", 7000);
+        await Promise.all([
+            loadChannels(),
+            loadOverview(),
+            loadPosts(),
+            loadLogs(),
+            loadSettings(),
+            loadCleanupTab(),
+        ]);
+    } catch (err) {
+        const box = $("#restorePreviewBox");
+        box.classList.remove("hidden");
+        box.className = "preview-box danger";
+        box.textContent = err.message;
+        showToast(err.message, "error", 7000);
+    } finally {
+        setBusy(button, false);
+    }
+}
+
+function initBackupEvents() {
+    const downloadBtn = $("#btnDownloadBackup");
+    if (downloadBtn) downloadBtn.addEventListener("click", downloadBackup);
+
+    const previewBtn = $("#btnPreviewBackup");
+    if (previewBtn) previewBtn.addEventListener("click", previewBackup);
+
+    const fileInput = $("#backupFileInput");
+    if (fileInput) {
+        fileInput.addEventListener("change", () => {
+            const box = $("#restorePreviewBox");
+            if (box) {
+                box.className = "preview-box";
+                box.classList.remove("hidden");
+                box.textContent = fileInput.files && fileInput.files.length
+                    ? `فایل انتخاب شد: ${fileInput.files[0].name} — روی «بررسی فایل» بزنید.`
+                    : "فایلی انتخاب نشده است.";
+            }
+        });
+    }
+
+    const validateBtn = $("#btnValidateBackup");
+    if (validateBtn) validateBtn.addEventListener("click", validateBackupFile);
+
+    const restoreBtn = $("#btnRestoreBackup");
+    if (restoreBtn) restoreBtn.addEventListener("click", () => restoreBackup(restoreBtn));
+}
+
 function initCleanupEvents() {
     // --- selection handling inside the archive table
     const postsBody = $("#postsTableBody");
@@ -1671,6 +1895,7 @@ async function boot() {
     initLogsEvents();
     initSettingsEvents();
     initCleanupEvents();
+    initBackupEvents();
 
     await loadOverview();
     await loadChannels();

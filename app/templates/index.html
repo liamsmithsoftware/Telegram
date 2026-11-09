@@ -104,8 +104,11 @@
             <button class="tab-btn" data-tab="settings" type="button">
                 ۴. تنظیمات، پروکسی و اکانت تلگرام
             </button>
+            <button class="tab-btn" data-tab="backup" type="button">
+                ۵. پشتیبان‌گیری و بازیابی
+            </button>
             <button class="tab-btn" data-tab="cleanup" type="button">
-                ۵. حذف و پاک‌سازی داده‌ها
+                ۶. حذف و پاک‌سازی داده‌ها
             </button>
         </nav>
 
@@ -550,7 +553,119 @@
             </div>
         </section>
 
-        <!-- TAB 5: CLEANUP / BULK DELETE -->
+        <!-- TAB 5: BACKUP / RESTORE -->
+        <section id="tab-backup" class="tab-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">پشتیبان‌گیری از فهرست کانال‌ها و تنظیمات</h2>
+                    <p class="card-desc">
+                        یک فایل <strong>JSON</strong> سبک شامل تمام کانال‌ها (آدرس، عنوان، بازه زمانی، وضعیت فعال بودن،
+                        شناسه آخرین پیام) و تنظیمات برنامه می‌گیرید. این فایل را می‌توانید روی همان سیستم یا یک نصب تازه،
+                        دوباره بارگذاری کنید. مطالب آرشیو در این فایل نیست؛ برای آرشیو کامل از خروجی <strong>SQLite</strong> در زبانه آرشیو استفاده کنید.
+                    </p>
+                </div>
+
+                <div class="backup-options">
+                    <label class="checkbox-label">
+                        <input id="backupIncludeSettings" type="checkbox" checked />
+                        <span>تنظیمات برنامه (حالت دریافت، منطقه زمانی، پروکسی، Telethon) هم در فایل باشد</span>
+                    </label>
+
+                    <label class="checkbox-label">
+                        <input id="backupIncludeSecrets" type="checkbox" />
+                        <span>
+                            کلیدهای حساس هم ذخیره شوند
+                            <small class="field-hint block-hint">
+                                <code>api_hash</code> و رمز پروکسی. به‌صورت پیش‌فرض برای امنیت در فایل نوشته نمی‌شوند؛
+                                اگر این فایل را جای امنی نگه می‌دارید، می‌توانید تیک بزنید.
+                            </small>
+                        </span>
+                    </label>
+
+                    <label class="checkbox-label">
+                        <input id="backupOnlyActive" type="checkbox" />
+                        <span>فقط کانال‌های فعال در فایل باشند</span>
+                    </label>
+                </div>
+
+                <div class="form-footer-between backup-actions">
+                    <div class="row-actions">
+                        <button id="btnDownloadBackup" type="button" class="btn btn-primary">
+                            دانلود فایل پشتیبان (JSON)
+                        </button>
+                        <button id="btnPreviewBackup" type="button" class="btn btn-outline">
+                            پیش‌نمایش محتوا
+                        </button>
+                    </div>
+                    <span class="field-hint">پسوند فایل: <code class="ltr-text">.json</code></span>
+                </div>
+
+                <div id="backupPreviewBox" class="preview-box hidden"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">بازیابی از فایل پشتیبان</h2>
+                    <p class="card-desc">
+                        فایل <code>.json</code> را انتخاب کنید. پیش از اعمال، محتوای فایل بررسی و نمایش داده می‌شود تا بدانید
+                        چند کانال اضافه یا به‌روزرسانی خواهد شد.
+                    </p>
+                </div>
+
+                <div class="stack-form">
+                    <div class="form-group">
+                        <label for="backupFileInput">فایل پشتیبان</label>
+                        <input id="backupFileInput" type="file" accept=".json,application/json" class="form-control file-input" />
+                        <small class="field-hint">حداکثر ۵ مگابایت — فقط فایل‌های JSON ساخته‌شده توسط همین برنامه</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>روش بازیابی</label>
+                        <div class="radio-group">
+                            <label class="radio-card">
+                                <input type="radio" name="restoreMode" value="merge" checked />
+                                <span>
+                                    <strong>ادغام (پیشنهادی)</strong>
+                                    <small class="field-hint block-hint">کانال‌های فایل اضافه یا به‌روزرسانی می‌شوند؛ هیچ کانال فعلی حذف نمی‌شود.</small>
+                                </span>
+                            </label>
+                            <label class="radio-card">
+                                <input type="radio" name="restoreMode" value="replace" />
+                                <span>
+                                    <strong>جایگزینی کامل</strong>
+                                    <small class="field-hint block-hint">ابتدا فهرست کانال‌ها و مطالب آن‌ها پاک می‌شود، سپس فایل بارگذاری می‌گردد.</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="delete-option-box">
+                        <label class="checkbox-label">
+                            <input id="restoreSettingsCheck" type="checkbox" checked />
+                            <span>تنظیمات موجود در فایل هم اعمال شود</span>
+                        </label>
+                        <label class="checkbox-label" style="margin-top: 8px">
+                            <input id="restoreOverwriteCheck" type="checkbox" />
+                            <span>
+                                تنظیمات فعلی با مقادیر فایل جایگزین شوند
+                                <small class="field-hint block-hint">
+                                    اگر تیک نزنید، فقط تنظیماتی که در برنامه خالی/پیش‌فرض هستند از فایل پر می‌شوند.
+                                </small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div id="restorePreviewBox" class="preview-box hidden"></div>
+
+                    <div class="form-footer-between">
+                        <button id="btnValidateBackup" type="button" class="btn btn-outline">بررسی فایل</button>
+                        <button id="btnRestoreBackup" type="button" class="btn btn-success">بازیابی پشتیبان</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 6: CLEANUP / BULK DELETE -->
         <section id="tab-cleanup" class="tab-panel">
             <div class="card">
                 <div class="card-header">
