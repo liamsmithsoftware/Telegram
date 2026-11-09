@@ -669,9 +669,19 @@ class DatabaseManager:
         date_from_greg: Optional[str] = None,
         date_to_greg: Optional[str] = None,
         media_type: Optional[str] = None,
+        post_ids: Optional[List[int]] = None,
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
+
+        if post_ids is not None:
+            clean_ids = [int(pid) for pid in post_ids]
+            if not clean_ids:
+                # An empty selection must match nothing
+                return "WHERE 0 = 1", []
+            placeholders = ",".join("?" for _ in clean_ids)
+            clauses.append(f"p.id IN ({placeholders})")
+            params.extend(clean_ids)
 
         if channel_id is not None:
             clauses.append("p.channel_id = ?")
@@ -779,6 +789,165 @@ class DatabaseManager:
                 params,
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Bulk deletion / purge (archive maintenance)
+    # ------------------------------------------------------------------
+    def count_posts_for_scope(
+        self,
+        *,
+        channel_id: Optional[int] = None,
+        date_from_greg: Optional[str] = None,
+        date_to_greg: Optional[str] = None,
+        media_type: Optional[str] = None,
+        search: Optional[str] = None,
+        post_ids: Optional[List[int]] = None,
+    ) -> int:
+        if post_ids is not None and not post_ids:
+            return 0
+        where_sql, params = self._build_post_filters(
+            channel_id=channel_id,
+            search=search,
+            date_from_greg=date_from_greg,
+            date_to_greg=date_to_greg,
+            media_type=media_type,
+            post_ids=post_ids,
+        )
+        with self.connection() as conn:
+            row = conn.execute(f"SELECT COUNT(*) AS cnt FROM posts p {where_sql}", params).fetchone()
+        return int(row["cnt"] or 0)
+
+    def delete_posts_by_scope(
+        self,
+        *,
+        channel_id: Optional[int] = None,
+        date_from_greg: Optional[str] = None,
+        date_to_greg: Optional[str] = None,
+        media_type: Optional[str] = None,
+        search: Optional[str] = None,
+        post_ids: Optional[List[int]] = None,
+        reset_channel_cursors: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Deletes every post matching the given scope in one atomic transaction.
+        With no filters at all, the whole archive is cleared.
+
+        `reset_channel_cursors` clears `last_message_id` of the affected channels so
+        the next fetch starts over using first-run semantics (latest
+        `initial_limit` posts). Without it, deleted posts would never come back
+        because the cursor still points past them.
+        """
+        if post_ids is not None and not post_ids:
+            return {
+                "deleted_posts": 0,
+                "affected_channels": [],
+                "channels_reset": 0,
+                "requested_ids": 0,
+            }
+
+        where_sql, params = self._build_post_filters(
+            channel_id=channel_id,
+            search=search,
+            date_from_greg=date_from_greg,
+            date_to_greg=date_to_greg,
+            media_type=media_type,
+            post_ids=post_ids,
+        )
+        now_iso = utc_now_iso()
+
+        with self.transaction() as conn:
+            affected_rows = conn.execute(
+                f"SELECT DISTINCT p.channel_id AS cid FROM posts p {where_sql}",
+                params,
+            ).fetchall()
+            affected_ids = [int(row["cid"]) for row in affected_rows]
+
+            deleted = conn.execute(
+                f"DELETE FROM posts WHERE id IN (SELECT p.id FROM posts p {where_sql})",
+                params,
+            ).rowcount
+
+            cursors_reset = 0
+            if reset_channel_cursors and affected_ids:
+                placeholders = ",".join("?" for _ in affected_ids)
+                cursors_reset = conn.execute(
+                    f"""
+                    UPDATE channels
+                    SET last_message_id = NULL,
+                        last_post_url = NULL,
+                        last_post_at = NULL,
+                        last_status = 'pending',
+                        last_error = NULL,
+                        updated_at = ?
+                    WHERE id IN ({placeholders})
+                    """,
+                    [now_iso, *affected_ids],
+                ).rowcount
+
+        return {
+            "deleted_posts": int(deleted),
+            "affected_channels": affected_ids,
+            "channels_reset": int(cursors_reset),
+            "requested_ids": len(post_ids) if post_ids else 0,
+        }
+
+    def delete_all_posts(self, reset_channel_cursors: bool = True) -> Dict[str, Any]:
+        return self.delete_posts_by_scope(reset_channel_cursors=reset_channel_cursors)
+
+    def delete_channel_completely(self, channel_id: int) -> Dict[str, Any]:
+        """Removes a channel together with all of its posts and log entries."""
+        channel = self.get_channel(channel_id)
+        if not channel:
+            raise LookupError("کانال مورد نظر یافت نشد.")
+        with self.transaction() as conn:
+            deleted_posts = conn.execute(
+                "DELETE FROM posts WHERE channel_id = ?", (channel_id,)
+            ).rowcount
+            deleted_logs = conn.execute(
+                "DELETE FROM fetch_logs WHERE channel_id = ?", (channel_id,)
+            ).rowcount
+            conn.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+        return {
+            "channel_id": channel_id,
+            "channel_title": channel["title"],
+            "deleted_posts": int(deleted_posts),
+            "deleted_logs": int(deleted_logs),
+        }
+
+    def purge_everything(self, *, keep_channels: bool = True) -> Dict[str, Any]:
+        """
+        Wipes the archive in one go.
+
+        keep_channels=True  -> posts + logs removed, channels kept with reset cursors.
+        keep_channels=False -> posts, logs AND channels removed (factory reset).
+        User settings (proxy / Telethon / timezone) are never touched.
+        """
+        now_iso = utc_now_iso()
+        with self.transaction() as conn:
+            deleted_posts = conn.execute("DELETE FROM posts").rowcount
+            deleted_logs = conn.execute("DELETE FROM fetch_logs").rowcount
+            deleted_channels = 0
+            if keep_channels:
+                conn.execute(
+                    """
+                    UPDATE channels
+                    SET last_message_id = NULL,
+                        last_post_url = NULL,
+                        last_post_at = NULL,
+                        last_status = 'pending',
+                        last_error = NULL,
+                        updated_at = ?
+                    """,
+                    (now_iso,),
+                )
+            else:
+                deleted_channels = conn.execute("DELETE FROM channels").rowcount
+        return {
+            "deleted_posts": int(deleted_posts),
+            "deleted_logs": int(deleted_logs),
+            "deleted_channels": int(deleted_channels),
+            "channels_kept": bool(keep_channels),
+        }
 
     def delete_post(self, post_id: int) -> bool:
         with self.transaction() as conn:

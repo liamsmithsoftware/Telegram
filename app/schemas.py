@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -52,3 +52,30 @@ class TelethonVerifyCodeRequest(BaseModel):
     phone: str = Field(..., min_length=5)
     code: str = Field(default="")
     password: Optional[str] = None
+
+
+class BulkDeleteRequest(BaseModel):
+    """حذف گروهی مطالب: با فیلتر (کانال/تاریخ/نوع محتوا/جستجو) یا با انتخاب شناسه‌ها."""
+
+    channel_id: Optional[int] = Field(default=None, description="شناسه کانال (خالی = همه کانال‌ها)")
+    date_from: Optional[str] = Field(default=None, description="از تاریخ (شمسی یا میلادی)")
+    date_to: Optional[str] = Field(default=None, description="تا تاریخ (شمسی یا میلادی)")
+    media_type: Optional[str] = Field(default=None, description="نوع محتوا (all یا خالی = همه)")
+    search: Optional[str] = Field(default=None, description="جستجو در متن یا آدرس مطلب")
+    post_ids: Optional[List[int]] = Field(
+        default=None,
+        description="حذف فقط این شناسه‌های مطلب (انتخاب دستی از جدول آرشیو)",
+    )
+    reset_channel_cursors: bool = Field(
+        default=True,
+        description="شناسه آخرین پیام کانال‌های متأثر ریست شود تا دریافت بعدی از ابتدا انجام شود",
+    )
+
+
+class PurgeRequest(BaseModel):
+    """پاک‌سازی کلی آرشیو."""
+
+    keep_channels: bool = Field(
+        default=True,
+        description="کانال‌ها حفظ شوند (فقط مطالب پاک شود) یا همه چیز حذف شود",
+    )

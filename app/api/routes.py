@@ -13,9 +13,11 @@ from app import config as app_config
 from app.config import DEFAULT_TIMEZONE
 from app.database import DatabaseManager
 from app.schemas import (
+    BulkDeleteRequest,
     ChannelCreateRequest,
     ChannelResetRequest,
     ChannelUpdateRequest,
+    PurgeRequest,
     SettingsUpdateRequest,
     TelethonSendCodeRequest,
     TelethonVerifyCodeRequest,
@@ -26,6 +28,13 @@ from app.utils.channel_parser import normalize_digits, parse_channel_input
 from app.utils.jalali import format_local_display, parse_filter_date_to_gregorian, utc_now
 
 router = APIRouter(prefix="/api")
+
+_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def to_persian_number(value: Any) -> str:
+    """اعداد را برای نمایش در پیام‌های فارسی تبدیل می‌کند."""
+    return str(value).translate(_FA_DIGITS)
 
 
 def _get_db(request: Request) -> DatabaseManager:
@@ -243,6 +252,116 @@ async def delete_post(post_id: int, request: Request) -> Dict[str, Any]:
     if not db.delete_post(post_id):
         raise HTTPException(status_code=404, detail="مطلب مورد نظر یافت نشد.")
     return {"deleted": True, "post_id": post_id}
+
+
+@router.post("/posts/bulk-delete")
+async def bulk_delete_posts(payload: BulkDeleteRequest, request: Request) -> Dict[str, Any]:
+    """
+    حذف گروهی مطالب:
+    - بر اساس فیلتر (کانال، بازه تاریخ شمسی/میلادی، نوع محتوا، جستجو)
+    - یا بر اساس انتخاب دستی `post_ids` از جدول آرشیو
+    بدون هیچ فیلتری، تمام مطالب آرشیو حذف می‌شود.
+    """
+    db = _get_db(request)
+
+    try:
+        greg_from = parse_filter_date_to_gregorian(payload.date_from)
+        greg_to = parse_filter_date_to_gregorian(payload.date_to)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if greg_from and greg_to and greg_from > greg_to:
+        raise HTTPException(status_code=400, detail="تاریخ شروع نمی‌تواند بعد از تاریخ پایان باشد.")
+
+    if payload.channel_id is not None and not db.get_channel(int(payload.channel_id)):
+        raise HTTPException(status_code=404, detail="کانال انتخاب‌شده یافت نشد.")
+
+    if payload.post_ids is not None and len(payload.post_ids) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="هیچ مطلبی برای حذف انتخاب نشده است. ابتدا در جدول آرشیو، ردیف‌ها را تیک بزنید.",
+        )
+
+    media_type = payload.media_type if payload.media_type and payload.media_type != "all" else None
+
+    matched = db.count_posts_for_scope(
+        channel_id=payload.channel_id,
+        date_from_greg=greg_from,
+        date_to_greg=greg_to,
+        media_type=media_type,
+        search=payload.search,
+        post_ids=payload.post_ids,
+    )
+    result = db.delete_posts_by_scope(
+        channel_id=payload.channel_id,
+        date_from_greg=greg_from,
+        date_to_greg=greg_to,
+        media_type=media_type,
+        search=payload.search,
+        post_ids=payload.post_ids,
+        reset_channel_cursors=payload.reset_channel_cursors,
+    )
+
+    if not result["deleted_posts"]:
+        message = "هیچ مطلبی مطابق با شرایط انتخاب‌شده یافت نشد."
+    elif payload.post_ids is not None:
+        message = f"{to_persian_number(result['deleted_posts'])} مطلب انتخاب‌شده حذف شد."
+    else:
+        message = f"{to_persian_number(result['deleted_posts'])} مطلب حذف شد."
+
+    return {
+        **result,
+        "matched_before_delete": matched,
+        "message": message,
+    }
+
+
+@router.get("/posts/ids")
+async def list_post_ids(
+    request: Request,
+    channel_id: Optional[int] = Query(default=None),
+    search: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    media_type: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    """شناسه همه مطالبی که با فیلتر فعلی مطابقت دارند (برای «انتخاب همه نتایج»)."""
+    db = _get_db(request)
+    try:
+        greg_from = parse_filter_date_to_gregorian(date_from)
+        greg_to = parse_filter_date_to_gregorian(date_to)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    media = media_type if media_type and media_type != "all" else None
+    posts = db.get_posts_for_export(
+        channel_id=channel_id,
+        search=search,
+        date_from_greg=greg_from,
+        date_to_greg=greg_to,
+        media_type=media,
+    )
+    return {"ids": [int(p["id"]) for p in posts], "total": len(posts)}
+
+
+@router.post("/posts/purge")
+async def purge_archive(payload: PurgeRequest, request: Request) -> Dict[str, Any]:
+    """پاک‌سازی کلی: همه مطالب و گزارش‌ها، با یا بدون کانال‌ها."""
+    db = _get_db(request)
+    result = db.purge_everything(keep_channels=payload.keep_channels)
+
+    if payload.keep_channels:
+        message = (
+            f"تمام مطالب ({to_persian_number(result['deleted_posts'])} مورد) و گزارش‌ها پاک شد. "
+            "کانال‌ها حفظ شدند و شناسه آخرین پیام آن‌ها ریست شد."
+        )
+    else:
+        message = (
+            f"همه چیز پاک شد: {to_persian_number(result['deleted_channels'])} کانال، "
+            f"{to_persian_number(result['deleted_posts'])} مطلب و "
+            f"{to_persian_number(result['deleted_logs'])} گزارش."
+        )
+    return {**result, "message": message}
 
 
 # ------------------------------------------------------------------
